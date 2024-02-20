@@ -10,8 +10,7 @@ import (
 
 	"github.com/hako/durafmt"
 	"github.com/penny-vault/pvdata/library"
-	"github.com/penny-vault/pvdata/providers"
-	"github.com/penny-vault/pvdata/providers/provider"
+	"github.com/penny-vault/pvdata/provider"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -54,7 +53,7 @@ sequentially (ignoring any set schedule).`,
 				ok          bool
 			)
 
-			if subProvider, ok = providers.Map[subscription.Provider]; !ok {
+			if subProvider, ok = provider.Map[subscription.Provider]; !ok {
 				log.Fatal().Str("ProviderKey", subscription.Provider).Msg("subscription is mis-configured, provider not found")
 			}
 
@@ -69,15 +68,13 @@ sequentially (ignoring any set schedule).`,
 			fetchLogger := log.With().Str("SubscriptionID", subscriptionID).Logger()
 
 			startTime := time.Now()
-			numRet, err := subDataset.Fetch(subscription.Config, subscription.DataTables, outChan, fetchLogger, progressChan)
+			numRet, err := subDataset.Fetch(ctx, subscription, outChan, fetchLogger, progressChan)
 			if err != nil {
 				fetchLogger.Fatal().Err(err).Msg("fetch returned an error")
 			}
 
 			endTime := time.Now()
-
 			runTime := endTime.Sub(startTime)
-
 			fetchLogger.Info().Str("RunTime", durafmt.Parse(runTime).String()).Int("NumberReturned", numRet).Msg("successfully fetched results")
 		}
 	},

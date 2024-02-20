@@ -15,8 +15,11 @@
 package provider
 
 import (
+	"context"
 	"time"
 
+	"github.com/penny-vault/pvdata/data"
+	"github.com/penny-vault/pvdata/library"
 	"github.com/rs/zerolog"
 )
 
@@ -30,11 +33,11 @@ type Provider interface {
 type Dataset struct {
 	Name        string
 	Description string
-	DataTypes   []*DataType
+	DataTypes   []*data.DataType
 	DateRange   func() (time.Time, time.Time)
 
 	// Fetch is called when pvdata wants to retrieve measurements from the dataset. It
 	// passes a config with the provider configuration, a channel to write results to,
 	// a logger to write log messages to, and a channel to write progress.
-	Fetch func(map[string]string, []string, chan<- interface{}, zerolog.Logger, chan<- int) (int, error)
+	Fetch func(context.Context, *library.Subscription, chan<- interface{}, zerolog.Logger, chan<- int) (int, error)
 }

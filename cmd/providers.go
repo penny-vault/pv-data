@@ -19,7 +19,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/glamour"
-	"github.com/penny-vault/pvdata/providers"
+	"github.com/penny-vault/pvdata/provider"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 )
@@ -40,7 +40,7 @@ var providersCmd = &cobra.Command{
 		builder := strings.Builder{}
 
 		if len(args) > 0 {
-			if provider, ok := providers.Map[args[0]]; ok {
+			if provider, ok := provider.Map[args[0]]; ok {
 				builder.WriteString(fmt.Sprintf("# %s\n", provider.Name()))
 				builder.WriteString(provider.Description())
 				builder.WriteString("\n\n## Datasets\n")
@@ -51,7 +51,7 @@ var providersCmd = &cobra.Command{
 			}
 		} else {
 			builder.WriteString("# Available Providers\n")
-			for _, provider := range providers.Map {
+			for _, provider := range provider.Map {
 				builder.WriteString(fmt.Sprintf("\n## %s\n", provider.Name()))
 				builder.WriteString(provider.Description())
 			}

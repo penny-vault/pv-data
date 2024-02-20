@@ -24,12 +24,10 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/google/uuid"
 	"github.com/gosimple/slug"
 	"github.com/penny-vault/pvdata/healthcheck"
 	"github.com/penny-vault/pvdata/library"
-	"github.com/penny-vault/pvdata/providers"
-	"github.com/penny-vault/pvdata/providers/provider"
+	"github.com/penny-vault/pvdata/provider"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -58,6 +56,10 @@ Also see: subscriptions, unsubscribe`,
 			ok           bool
 			confirmed    bool
 			monitored    bool
+
+			subName     string
+			subDataset  string
+			subSchedule string
 		)
 
 		ctx := context.Background()
@@ -69,26 +71,18 @@ Also see: subscriptions, unsubscribe`,
 
 		// check if data provider exists
 		providerName := args[0]
-		if dataProvider, ok = providers.Map[providerName]; !ok {
+		if dataProvider, ok = provider.Map[providerName]; !ok {
 			fmt.Printf("Data Provider '%s' doesn't exist.\n", providerName)
 			fmt.Printf("Run `pvdata providers` for a complete list of available providers")
 			os.Exit(1)
 		}
 
+		r := []rune(providerName)
+		subName = string(append([]rune{unicode.ToUpper(r[0])}, r[1:]...))
+
 		minuteChoice := rand.Intn(12) * 5
 		hourChoice := rand.Intn(9)
-
-		subscription := library.Subscription{
-			ID:       uuid.New(),
-			Name:     dataProvider.Name(),
-			Provider: providerName,
-			Config:   make(map[string]string),
-			Schedule: fmt.Sprintf("%d %d * * 1-5", minuteChoice, hourChoice),
-			Library:  myLibrary,
-		}
-
-		r := []rune(subscription.Name)
-		subscription.Name = string(append([]rune{unicode.ToUpper(r[0])}, r[1:]...))
+		subSchedule = fmt.Sprintf("%d %d * * 1-5", minuteChoice, hourChoice)
 
 		// build a dataset selection field
 		datasetOptions := make([]huh.Option[string], 0, len(dataProvider.Datasets()))
@@ -110,14 +104,14 @@ Also see: subscriptions, unsubscribe`,
 			huh.NewGroup(
 				huh.NewInput().
 					Title("What should the subscription be named?").
-					Value(&subscription.Name),
+					Value(&subName),
 				huh.NewSelect[string]().
 					Title("Which dataset do you want to subscribe to?").
 					Options(datasetOptions...).
-					Value(&subscription.Dataset),
+					Value(&subDataset),
 				huh.NewInput().
 					Title("What schedule should the subscription run on?").
-					Value(&subscription.Schedule),
+					Value(&subSchedule),
 				huh.NewConfirm().
 					Title("Should a healthcheck.io monitor be created for the subscription?").
 					Value(&monitored),
@@ -131,9 +125,20 @@ Also see: subscriptions, unsubscribe`,
 		}
 
 		// build configuration map
+		subConfig := make(map[string]string, len(config))
 		for k, v := range config {
-			subscription.Config[k] = *v
+			subConfig[k] = *v
 		}
+
+		// create a new subscription
+		subscription, err := provider.NewSubscription(providerName, subDataset, subConfig, myLibrary)
+		if err != nil {
+			log.Fatal().Err(err).Msg("unexpected error occurred when creating subscription")
+		}
+
+		subscription.Name = subName
+		subscription.Schedule = subSchedule
+		subscription.Dataset = subDataset
 
 		// Print subscription summary
 		{

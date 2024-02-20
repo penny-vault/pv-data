@@ -27,6 +27,14 @@ const (
 	UnknownAsset AssetType = "Unknown"
 )
 
+type DataType struct {
+	Name          string
+	Schema        string
+	Migrations    []string
+	Version       int
+	IsPartitioned bool
+}
+
 type Asset struct {
 	Ticker               string    `json:"ticker" parquet:"name=ticker, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
 	Name                 string    `json:"name" parquet:"name=name, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
@@ -49,6 +57,6 @@ type Asset struct {
 	HeadquartersLocation string    `json:"headquarters_location" toml:"headquarters_location" parquet:"name=headquarters_location, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
 	SimilarTickers       []string  `json:"similar_tickers" toml:"similar_tickers" parquet:"name=similar_tickers, type=MAP, convertedtype=LIST, valuetype=BYTE_ARRAY, valueconvertedtype=UTF8"`
 
-	LastUpdated int64  `json:"last_updated" parquet:"name=last_update, type=INT64"`
+	LastUpdated int64  `json:"last_updated" parquet:"name=last_updated, type=INT64"`
 	Source      string `json:"source" parquet:"name=source, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
 }

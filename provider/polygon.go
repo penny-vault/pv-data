@@ -12,9 +12,10 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-package polygon
+package provider
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strconv"
@@ -22,10 +23,10 @@ import (
 
 	"github.com/go-resty/resty/v2"
 	"github.com/goccy/go-json"
+	"github.com/jackc/pgx/v5"
 	"github.com/penny-vault/pvdata/data"
-	"github.com/penny-vault/pvdata/providers/provider"
+	"github.com/penny-vault/pvdata/library"
 	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 )
 
 var (
@@ -50,16 +51,16 @@ func (polygon *Polygon) Description() string {
 	return `The Polygon.io Stocks API provides REST endpoints that let you query the latest market data from all US stock exchanges. You can also find data on company financials, stock market holidays, corporate actions, and more.`
 }
 
-func (polygon *Polygon) Datasets() map[string]provider.Dataset {
-	return map[string]provider.Dataset{
+func (polygon *Polygon) Datasets() map[string]Dataset {
+	return map[string]Dataset{
 		"Stock Tickers": {
 			Name:        "Stock Tickers",
 			Description: "Details about tradeable stocks and ETFs.",
-			DataTypes:   []*provider.DataType{provider.DataTypes["asset-description"]},
+			DataTypes:   []*data.DataType{data.DataTypes["asset-description"]},
 			DateRange: func() (time.Time, time.Time) {
 				return time.Date(1998, 1, 1, 0, 0, 0, 0, time.UTC), time.Now().UTC()
 			},
-			Fetch: func(config map[string]string, tables []string, out chan<- interface{}, logger zerolog.Logger, progress chan<- int) (int, error) {
+			Fetch: func(ctx context.Context, subscription *library.Subscription, out chan<- interface{}, logger zerolog.Logger, progress chan<- int) (int, error) {
 				// get a list of all active assets
 				assets := make([]*data.Asset, 0, 6000)
 
@@ -67,9 +68,9 @@ func (polygon *Polygon) Datasets() map[string]provider.Dataset {
 					rateDuration time.Duration
 				)
 
-				rateLimit, err := strconv.Atoi(config["rateLimit"])
+				rateLimit, err := strconv.Atoi(subscription.Config["rateLimit"])
 				if err != nil {
-					logger.Error().Err(err).Str("configRateLimit", config["rateLimit"]).Msg("could not convert rateLimit configuration parameter to an integer")
+					logger.Error().Err(err).Str("configRateLimit", subscription.Config["rateLimit"]).Msg("could not convert rateLimit configuration parameter to an integer")
 					return 0, err
 				}
 
@@ -80,7 +81,7 @@ func (polygon *Polygon) Datasets() map[string]provider.Dataset {
 				client := resty.New()
 
 				for _, assetType := range []string{"CS", "ADRC", "ETF"} {
-					if tmpAssets, err := getPolygonTickers(config, assetType, client, rateLimit, rateDuration, logger); err != nil {
+					if tmpAssets, err := getPolygonTickers(subscription.Config, assetType, client, rateLimit, rateDuration, logger); err != nil {
 						logger.Error().Err(err).Str("AssetType", assetType).Msg("error getting ticker information")
 						return 0, err
 					} else {
@@ -92,9 +93,40 @@ func (polygon *Polygon) Datasets() map[string]provider.Dataset {
 					}
 				}
 
-				log.Info().Int("Count", len(assets)).Msg("got assets from polygon")
+				logger.Info().Int("Count", len(assets)).Msg("got assets from polygon")
 
-				return len(assets), nil
+				// for each asset determine if details need to be queried
+				dbConn, err := subscription.Library.Pool.Acquire(ctx)
+				if err != nil {
+					logger.Error().Err(err).Msg("error getting database connection")
+					return 0, err
+				}
+				defer dbConn.Release()
+
+				assetDetail := make([]*data.Asset, 0, len(assets))
+				for _, asset := range assets {
+					var lastUpdated int64
+					err := dbConn.QueryRow(
+						ctx,
+						fmt.Sprintf("SELECT EXTRACT(EPOCH FROM last_updated) FROM %s WHERE composite_figi=$1 AND ticker=$2 LIMIT 1", subscription.DataTables[0]),
+						asset.CompositeFigi, asset.Ticker,
+					).Scan(&lastUpdated)
+					if err != nil {
+						if errors.Is(err, pgx.ErrNoRows) {
+							assetDetail = append(assetDetail, asset)
+							continue
+						}
+
+						logger.Error().Err(err).Str("CompositeFIGI", asset.CompositeFigi).Str("Ticker", asset.Ticker).Msg("error when querying database for asset")
+						return 0, err
+					}
+
+					if lastUpdated > asset.LastUpdated {
+						assetDetail = append(assetDetail, asset)
+					}
+				}
+
+				return len(assetDetail), nil
 			},
 		},
 	}
@@ -133,6 +165,12 @@ func getPolygonTickers(config map[string]string, assetType string, client *resty
 	// NOTE: results are limited to stocks
 	maxQueries := 1000
 
+	nyc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		logger.Error().Err(err).Msg("could not load timezone")
+		return []*data.Asset{}, err
+	}
+
 	logger.Info().Msg("getPolygonTickers")
 
 	resp, err := client.R().
@@ -167,6 +205,8 @@ func getPolygonTickers(config map[string]string, assetType string, client *resty
 			if err != nil {
 				logger.Error().Err(err).Str("Ticker", ticker.Ticker).Msg("could not parse last updated string for tickers")
 			}
+
+			lastUpdated = lastUpdated.In(nyc)
 
 			polygonAsset := &data.Asset{
 				Ticker:          ticker.Ticker,

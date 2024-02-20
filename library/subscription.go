@@ -24,9 +24,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/gosimple/slug"
 	"github.com/jackc/pgx/v5"
+	"github.com/penny-vault/pvdata/data"
 	"github.com/penny-vault/pvdata/healthcheck"
-	"github.com/penny-vault/pvdata/providers"
-	"github.com/penny-vault/pvdata/providers/provider"
 	"github.com/rs/zerolog/log"
 )
 
@@ -70,7 +69,7 @@ type dateRange struct {
 
 // Delete the subscription from database along with all associated tables
 func (subscription *Subscription) Delete(ctx context.Context) error {
-	conn, err := subscription.Library.pool.Acquire(ctx)
+	conn, err := subscription.Library.Pool.Acquire(ctx)
 	if err != nil {
 		return err
 	}
@@ -115,7 +114,7 @@ func (subscription *Subscription) Delete(ctx context.Context) error {
 
 // Activate the subscription
 func (subscription *Subscription) Activate(ctx context.Context) error {
-	conn, err := subscription.Library.pool.Acquire(ctx)
+	conn, err := subscription.Library.Pool.Acquire(ctx)
 	if err != nil {
 		return err
 	}
@@ -149,7 +148,7 @@ func (subscription *Subscription) Activate(ctx context.Context) error {
 // Deactivate the subscription; all data is still saved in the database but the subscription
 // is marked as inactive and it won't show up in reports
 func (subscription *Subscription) Deactivate(ctx context.Context) error {
-	conn, err := subscription.Library.pool.Acquire(ctx)
+	conn, err := subscription.Library.Pool.Acquire(ctx)
 	if err != nil {
 		return err
 	}
@@ -182,7 +181,7 @@ func (subscription *Subscription) Deactivate(ctx context.Context) error {
 
 // Save the subscription to the database
 func (subscription *Subscription) Save(ctx context.Context) error {
-	conn, err := subscription.Library.pool.Acquire(ctx)
+	conn, err := subscription.Library.Pool.Acquire(ctx)
 	if err != nil {
 		return err
 	}
@@ -193,14 +192,6 @@ func (subscription *Subscription) Save(ctx context.Context) error {
 		return err
 	}
 	defer tx.Rollback(ctx)
-
-	// make sure that the dataset types and tables are populated
-	dataTypes := providers.Map[subscription.Provider].Datasets()[subscription.Dataset].DataTypes
-	subscription.DataTypes = make([]string, len(dataTypes))
-	for idx, dataType := range dataTypes {
-		subscription.DataTypes[idx] = dataType.Name
-	}
-	subscription.DataTables = subscription.computeTableNames()
 
 	// create table structure for each data type this dataset produces
 	if err := subscription.createTables(ctx, tx); err != nil {
@@ -238,9 +229,21 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11);`, subscription.ID.String(
 	return nil
 }
 
+// Compute table names based on subscription data types
+func (subscription *Subscription) ComputeTableNames() {
+	ret := make([]string, len(subscription.DataTypes))
+	for idx, dataType := range subscription.DataTypes {
+		tbl := slug.Make(fmt.Sprintf("%s %s %s %s", subscription.Provider, subscription.Dataset, dataType, subscription.ID.String()[:5]))
+		tbl = strings.ReplaceAll(tbl, "-", "_")
+		ret[idx] = tbl
+	}
+
+	subscription.DataTables = ret
+}
+
 // ManagePartitions creates any new partitions needed for the subscription
 func (subscription *Subscription) ManagePartitions(ctx context.Context) error {
-	conn, err := subscription.Library.pool.Acquire(ctx)
+	conn, err := subscription.Library.Pool.Acquire(ctx)
 	if err != nil {
 		return err
 	}
@@ -268,7 +271,7 @@ func (subscription *Subscription) ManagePartitions(ctx context.Context) error {
 // managePartitionsWithTransaction uses the specified transaction `tx` to create missing partitions
 func (subscription *Subscription) managePartitionsWithTransaction(ctx context.Context, tx pgx.Tx) error {
 	for idx, dataTypeName := range subscription.DataTypes {
-		dataType := provider.DataTypes[dataTypeName]
+		dataType := data.DataTypes[dataTypeName]
 		dataTable := subscription.DataTables[idx]
 
 		// if table is not partitioned skip to next dataType
@@ -322,7 +325,7 @@ func (subscription *Subscription) PartitionTables() []string {
 	tables := make([]string, 0, 10)
 
 	for idx, dataTypeName := range subscription.DataTypes {
-		dataType := provider.DataTypes[dataTypeName]
+		dataType := data.DataTypes[dataTypeName]
 		dataTable := subscription.DataTables[idx]
 
 		// if table is not partitioned skip to next dataType
@@ -369,7 +372,7 @@ func (subscription *Subscription) PartitionTables() []string {
 
 func (subscription *Subscription) createTables(ctx context.Context, tx pgx.Tx) error {
 	for idx, dataTypeName := range subscription.DataTypes {
-		dataType := provider.DataTypes[dataTypeName]
+		dataType := data.DataTypes[dataTypeName]
 		schema := dataType.ExpandedSchema(subscription.DataTables[idx])
 		_, err := tx.Exec(ctx, schema)
 		if err != nil {
@@ -377,14 +380,4 @@ func (subscription *Subscription) createTables(ctx context.Context, tx pgx.Tx) e
 		}
 	}
 	return nil
-}
-
-func (subscription *Subscription) computeTableNames() []string {
-	ret := make([]string, len(subscription.DataTypes))
-	for idx, dataType := range subscription.DataTypes {
-		tbl := slug.Make(fmt.Sprintf("%s %s %s %s", subscription.Provider, subscription.Dataset, dataType, subscription.ID.String()[:5]))
-		tbl = strings.ReplaceAll(tbl, "-", "_")
-		ret[idx] = tbl
-	}
-	return ret
 }

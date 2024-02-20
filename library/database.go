@@ -28,12 +28,12 @@ type Library struct {
 	Name  string
 	Owner string
 
-	pool *pgxpool.Pool
+	Pool *pgxpool.Pool
 }
 
 // Connect to the database configured for the library
 func (myLibrary *Library) Connect(ctx context.Context) error {
-	if myLibrary.pool != nil {
+	if myLibrary.Pool != nil {
 		return nil
 	}
 
@@ -41,14 +41,14 @@ func (myLibrary *Library) Connect(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	myLibrary.pool = pool
+	myLibrary.Pool = pool
 
 	return nil
 }
 
 // Close the database pool
 func (myLibrary *Library) Close() {
-	myLibrary.pool.Close()
+	myLibrary.Pool.Close()
 }
 
 // NewFromDB creates a new library object with values from the database
@@ -66,7 +66,7 @@ func NewFromDB(ctx context.Context, dbURL string) (*Library, error) {
 
 	myLibrary := Library{
 		DBUrl: dbURL,
-		pool:  pool,
+		Pool:  pool,
 	}
 
 	if err := conn.QueryRow(ctx, "SELECT name, owner FROM library").Scan(&myLibrary.Name, &myLibrary.Owner); err != nil {
@@ -78,7 +78,7 @@ func NewFromDB(ctx context.Context, dbURL string) (*Library, error) {
 
 // SaveDB creates a new record in the library table for this library
 func (myLibrary *Library) SaveDB(ctx context.Context) error {
-	conn, err := myLibrary.pool.Acquire(ctx)
+	conn, err := myLibrary.Pool.Acquire(ctx)
 	if err != nil {
 		return err
 	}
@@ -90,7 +90,7 @@ func (myLibrary *Library) SaveDB(ctx context.Context) error {
 
 // NumSubscriptions returns the total count of subscriptions configured in the database
 func (myLibrary *Library) NumSubscriptions(ctx context.Context) (int, error) {
-	conn, err := myLibrary.pool.Acquire(ctx)
+	conn, err := myLibrary.Pool.Acquire(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -103,7 +103,7 @@ func (myLibrary *Library) NumSubscriptions(ctx context.Context) (int, error) {
 
 // LastUpdated returns the date that the database was last updated
 func (myLibrary *Library) LastUpdated(ctx context.Context) (time.Time, error) {
-	conn, err := myLibrary.pool.Acquire(ctx)
+	conn, err := myLibrary.Pool.Acquire(ctx)
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -120,7 +120,7 @@ func (myLibrary *Library) LastUpdated(ctx context.Context) (time.Time, error) {
 
 // TotalRecords returns the total number of records in the library
 func (myLibrary *Library) TotalRecords(ctx context.Context) (int, error) {
-	conn, err := myLibrary.pool.Acquire(ctx)
+	conn, err := myLibrary.Pool.Acquire(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -133,7 +133,7 @@ func (myLibrary *Library) TotalRecords(ctx context.Context) (int, error) {
 
 // TotalSecurities returns the total number of securities in the library
 func (myLibrary *Library) TotalSecurities(ctx context.Context) (int, error) {
-	conn, err := myLibrary.pool.Acquire(ctx)
+	conn, err := myLibrary.Pool.Acquire(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -147,7 +147,7 @@ func (myLibrary *Library) TotalSecurities(ctx context.Context) (int, error) {
 // Subscriptions returns an array of subscription objects
 func (myLibrary *Library) Subscriptions(ctx context.Context) ([]*Subscription, error) {
 	var subscriptions []*Subscription
-	err := pgxscan.Select(ctx, myLibrary.pool, &subscriptions,
+	err := pgxscan.Select(ctx, myLibrary.Pool, &subscriptions,
 		`SELECT id, name, provider, dataset, config, data_tables, data_types, total_records,
 num_records_last_import, total_securities, num_securities_last_import,
 coalesce(first_obs_date, '0001-01-01'::timestamp) as first_obs_date,
@@ -162,7 +162,7 @@ created_by FROM subscriptions`)
 
 // SubscriptionFromID fetches a subscription from the library with the given ID
 func (myLibrary *Library) SubscriptionFromID(ctx context.Context, id string) (*Subscription, error) {
-	conn, err := myLibrary.pool.Acquire(ctx)
+	conn, err := myLibrary.Pool.Acquire(ctx)
 	if err != nil {
 		return nil, err
 	}
