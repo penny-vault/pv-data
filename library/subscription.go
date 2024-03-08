@@ -39,6 +39,7 @@ type Subscription struct {
 
 	DataTables    []string
 	DataTypes     []string
+	DataTablesMap map[string]string
 	IsPartitioned bool
 
 	TotalRecords         int64
@@ -232,10 +233,13 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11);`, subscription.ID.String(
 // Compute table names based on subscription data types
 func (subscription *Subscription) ComputeTableNames() {
 	ret := make([]string, len(subscription.DataTypes))
+	subscription.DataTablesMap = make(map[string]string, len(subscription.DataTypes))
 	for idx, dataType := range subscription.DataTypes {
 		tbl := slug.Make(fmt.Sprintf("%s %s %s %s", subscription.Provider, subscription.Dataset, dataType, subscription.ID.String()[:5]))
 		tbl = strings.ReplaceAll(tbl, "-", "_")
 		ret[idx] = tbl
+
+		subscription.DataTablesMap[dataType] = tbl
 	}
 
 	subscription.DataTables = ret

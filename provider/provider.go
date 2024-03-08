@@ -20,7 +20,6 @@ import (
 
 	"github.com/penny-vault/pvdata/data"
 	"github.com/penny-vault/pvdata/library"
-	"github.com/rs/zerolog"
 )
 
 type Provider interface {
@@ -39,5 +38,5 @@ type Dataset struct {
 	// Fetch is called when pvdata wants to retrieve measurements from the dataset. It
 	// passes a config with the provider configuration, a channel to write results to,
 	// a logger to write log messages to, and a channel to write progress.
-	Fetch func(context.Context, *library.Subscription, chan<- interface{}, zerolog.Logger, chan<- int) (int, error)
+	Fetch func(context.Context, *library.Subscription, chan<- *data.Observation, chan<- data.RunSummary)
 }

@@ -14,11 +14,44 @@
 // limitations under the License.
 package data
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+
+	"github.com/google/uuid"
+)
+
+type RunSummary struct {
+	StartTime        time.Time
+	EndTime          time.Time
+	NumObservations  int
+	SubscriptionID   uuid.UUID
+	SubscriptionName string
+}
+
+type Observation struct {
+	AssetObject *Asset
+
+	ObservationDate  time.Time
+	SubscriptionID   uuid.UUID
+	SubscriptionName string
+}
+
+type DataType struct {
+	Name          string
+	Schema        string
+	Migrations    []string
+	Version       int
+	IsPartitioned bool
+}
+
+const (
+	AssetKey = "asset-description"
+)
 
 var DataTypes = map[string]*DataType{
-	"asset-description": {
-		Name: "asset-description",
+	AssetKey: {
+		Name: AssetKey,
 		Schema: `CREATE TABLE %[1]s (
 ticker TEXT,
 composite_figi TEXT,
@@ -31,12 +64,13 @@ description TEXT,
 corporate_url TEXT,
 sector TEXT,
 industry TEXT,
+icon_url TEXT,
 logo_url TEXT,
 sic_code INT,
 cik TEXT,
 cusips text[],
 isins text[],
-sharadar_id INT,
+other_identifiers JSONB,
 similar_tickers TEXT[],
 tags TEXT[],
 listed timestamp,

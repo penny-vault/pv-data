@@ -17,10 +17,14 @@ package library
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/georgysavva/scany/v2/pgxscan"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/penny-vault/pvdata/data"
+	"github.com/rs/zerolog/log"
 )
 
 type Library struct {
@@ -144,6 +148,46 @@ func (myLibrary *Library) TotalSecurities(ctx context.Context) (int, error) {
 	return count, err
 }
 
+// SaveObservations continuously reads from the input queue
+func (myLibrary *Library) SaveObservations(queue <-chan *data.Observation, wg *sync.WaitGroup) {
+	ctx := context.Background()
+	defer wg.Done()
+
+	conn, err := myLibrary.Pool.Acquire(ctx)
+	if err != nil {
+		log.Panic().Err(err).Msg("cannot acquire database connection")
+		return
+	}
+	defer conn.Release()
+
+	subscriptionList, err := myLibrary.Subscriptions(ctx)
+	if err != nil {
+		log.Error().Err(err).Msg("could not get list of subscriptions")
+	}
+
+	subscriptions := make(map[uuid.UUID]*Subscription, len(subscriptionList))
+	for _, sub := range subscriptionList {
+		subscriptions[sub.ID] = sub
+	}
+
+	for elem := range queue {
+		subscription, ok := subscriptions[elem.SubscriptionID]
+		if !ok {
+			log.Error().Str("SubscriptionID", elem.SubscriptionID.String()).Str("SubscriptionName", elem.SubscriptionName).Msg("subscription not found")
+			continue
+		}
+
+		switch {
+		case elem.AssetObject != nil:
+			if err := elem.AssetObject.Save(ctx, subscription.DataTablesMap[data.AssetKey], conn); err != nil {
+				log.Error().Err(err).Msg("cannot save asset to database")
+			}
+		default:
+			log.Error().Msg("blank observation received")
+		}
+	}
+}
+
 // Subscriptions returns an array of subscription objects
 func (myLibrary *Library) Subscriptions(ctx context.Context) ([]*Subscription, error) {
 	var subscriptions []*Subscription
@@ -156,6 +200,11 @@ coalesce(last_run, '0001-01-01'::timestamp) as last_run, active, schema_version,
 created_by FROM subscriptions`)
 	for _, sub := range subscriptions {
 		sub.Library = myLibrary
+
+		sub.DataTablesMap = make(map[string]string, len(sub.DataTables))
+		for idx, dataType := range sub.DataTypes {
+			sub.DataTablesMap[dataType] = sub.DataTables[idx]
+		}
 	}
 	return subscriptions, err
 }
@@ -185,6 +234,12 @@ func (myLibrary *Library) SubscriptionFromID(ctx context.Context, id string) (*S
 	err = pgxscan.ScanOne(subscription, rows)
 	if err != nil {
 		return nil, err
+	}
+
+	// build DataTablesMap
+	subscription.DataTablesMap = make(map[string]string, len(subscription.DataTables))
+	for idx, dataType := range subscription.DataTypes {
+		subscription.DataTablesMap[dataType] = subscription.DataTables[idx]
 	}
 
 	return subscription, nil

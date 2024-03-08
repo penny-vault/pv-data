@@ -6,9 +6,9 @@ package cmd
 import (
 	"context"
 	"os"
-	"time"
+	"sync"
 
-	"github.com/hako/durafmt"
+	"github.com/penny-vault/pvdata/data"
 	"github.com/penny-vault/pvdata/library"
 	"github.com/penny-vault/pvdata/provider"
 	"github.com/rs/zerolog/log"
@@ -40,6 +40,13 @@ sequentially (ignoring any set schedule).`,
 			os.Exit(0)
 		}
 
+		outChan := make(chan *data.Observation, 1000)
+		exitChan := make(chan data.RunSummary, 5)
+
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go myLibrary.SaveObservations(outChan, &wg)
+
 		// not daemon mode, execute each subscription individually
 		for _, subscriptionID := range args {
 			subscription, err := myLibrary.SubscriptionFromID(ctx, subscriptionID)
@@ -62,21 +69,21 @@ sequentially (ignoring any set schedule).`,
 					Msg("subscription is mis-configured, dataset not found")
 			}
 
-			outChan := make(chan interface{}, 100)
-			progressChan := make(chan int, 100)
-
 			fetchLogger := log.With().Str("SubscriptionID", subscriptionID).Logger()
+			ctx = fetchLogger.WithContext(ctx)
 
-			startTime := time.Now()
-			numRet, err := subDataset.Fetch(ctx, subscription, outChan, fetchLogger, progressChan)
-			if err != nil {
-				fetchLogger.Fatal().Err(err).Msg("fetch returned an error")
-			}
+			subDataset.Fetch(ctx, subscription, outChan, exitChan)
 
-			endTime := time.Now()
-			runTime := endTime.Sub(startTime)
-			fetchLogger.Info().Str("RunTime", durafmt.Parse(runTime).String()).Int("NumberReturned", numRet).Msg("successfully fetched results")
+			// read the exit message from exitChan
+			summaryMsg := <-exitChan
+			fetchLogger.Info().Time("StartTime", summaryMsg.StartTime).Time("EndTime", summaryMsg.EndTime).Str("RunTime", summaryMsg.EndTime.Sub(summaryMsg.StartTime).String()).Msg("finished running subscription")
 		}
+
+		// close the output channel
+		close(outChan)
+
+		// wait for library SaveObservations to finish
+		wg.Wait()
 	},
 }
 
