@@ -3,7 +3,7 @@ module github.com/penny-vault/pvdata
 go 1.21.2
 
 require (
-	github.com/go-resty/resty/v2 v2.11.0
+	github.com/go-resty/resty/v2 v2.12.0
 	github.com/goccy/go-json v0.10.2
 	github.com/golang-migrate/migrate/v4 v4.17.0
 	golang.org/x/time v0.5.0
