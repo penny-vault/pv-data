@@ -10,7 +10,9 @@ require (
 )
 
 require (
+	github.com/PuerkitoBio/goquery v1.8.1 // indirect
 	github.com/alecthomas/chroma/v2 v2.13.0 // indirect
+	github.com/andybalholm/cascadia v1.3.2 // indirect
 	github.com/google/go-cmp v0.6.0 // indirect
 	github.com/gosimple/unidecode v1.0.1 // indirect
 	github.com/rogpeppe/go-internal v1.12.0 // indirect
