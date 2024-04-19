@@ -5,7 +5,7 @@ go 1.22.1
 require (
 	github.com/go-resty/resty/v2 v2.12.0
 	github.com/goccy/go-json v0.10.2
-	github.com/golang-migrate/migrate/v4 v4.17.0
+	github.com/golang-migrate/migrate/v4 v4.17.1
 	golang.org/x/time v0.5.0
 )
 
@@ -17,7 +17,6 @@ require (
 )
 
 require (
-	github.com/alecthomas/chroma v0.10.0 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/aymerick/douceur v0.2.0 // indirect
