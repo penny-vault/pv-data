@@ -107,7 +107,9 @@ func (polygon *Polygon) Datasets() map[string]Dataset {
 				}
 
 				// fetch upcoming market holidays
-				limiter.Wait(ctx)
+				if err := limiter.Wait(ctx); err != nil {
+					log.Panic().Err(err).Msg("rate limit wait failed")
+				}
 
 				respContent := make([]*polygonHoliday, 0)
 				resp, err := client.R().
@@ -330,7 +332,10 @@ func (api *polygonAssetFetcher) assets(ctx context.Context, assetType string) ([
 		return []*data.Asset{}, err
 	}
 
-	api.limiter.Wait(ctx)
+	if err := api.limiter.Wait(ctx); err != nil {
+		log.Panic().Err(err).Msg("rate limit wait failed")
+	}
+
 	resp, err := api.client.R().
 		SetQueryParam("market", "stocks").
 		SetQueryParam("active", "true").
@@ -353,7 +358,10 @@ func (api *polygonAssetFetcher) assets(ctx context.Context, assetType string) ([
 
 		// de-serealize stock content
 		polygonTickers := make([]*polygonStock, 0, 1000)
-		json.Unmarshal(*respContent.Results, &polygonTickers)
+		if err := json.Unmarshal(*respContent.Results, &polygonTickers); err != nil {
+			log.Error().Err(err).Msg("could not unmarshal response of polygon tickers")
+			return nil, err
+		}
 
 		logger.Debug().Int("ReceivedNAssets", len(polygonTickers)).Str("AssetType", assetType).Msg("got tickers")
 
@@ -390,7 +398,11 @@ func (api *polygonAssetFetcher) assets(ctx context.Context, assetType string) ([
 		respContent.Next = ""
 
 		logger.Debug().Str("Next", next).Str("AssetType", assetType).Int("ii", ii).Msg("making next query")
-		api.limiter.Wait(ctx)
+
+		if err := api.limiter.Wait(ctx); err != nil {
+			log.Panic().Err(err).Msg("rate limit wait failed")
+		}
+
 		resp, err = api.client.R().
 			SetResult(&respContent).
 			Get(next)
@@ -546,7 +558,11 @@ func (api *polygonAssetFetcher) delistedAssets(ctx context.Context, assets []*da
 	for _, assetType := range []string{"CS", "ADRC", "ETF"} {
 		// query polygon for inactive assets
 		var respContent polygonResponse
-		api.limiter.Wait(ctx)
+
+		if err := api.limiter.Wait(ctx); err != nil {
+			log.Panic().Err(err).Msg("rate limit failed")
+		}
+
 		resp, err := api.client.R().
 			SetQueryParam("active", "false").
 			SetQueryParam("sort", "last_updated_utc").
@@ -574,7 +590,10 @@ func (api *polygonAssetFetcher) delistedAssets(ctx context.Context, assets []*da
 
 			// de-serealize stock content
 			polygonAssets := make([]*polygonStock, 0, 1000)
-			json.Unmarshal(*respContent.Results, &polygonAssets)
+			if err := json.Unmarshal(*respContent.Results, &polygonAssets); err != nil {
+				log.Error().Err(err).Msg("json unmarshal of polygon assets failed")
+				return err
+			}
 
 			logger.Debug().Int("ReceivedNAssets", len(polygonAssets)).Msg("got inactive tickers")
 
@@ -613,7 +632,11 @@ func (api *polygonAssetFetcher) delistedAssets(ctx context.Context, assets []*da
 			respContent.Next = ""
 
 			logger.Debug().Str("Next", next).Int("ii", ii).Msg("making next query")
-			api.limiter.Wait(ctx)
+
+			if err := api.limiter.Wait(ctx); err != nil {
+				log.Panic().Err(err).Msg("rate limit failed")
+			}
+
 			resp, err = api.client.R().
 				SetResult(&respContent).
 				Get(next)
@@ -673,7 +696,10 @@ func (api *polygonAssetFetcher) assetDetail(ctx context.Context, asset *data.Ass
 	logger := zerolog.Ctx(ctx)
 	detailsURL := fmt.Sprintf("https://api.polygon.io/v3/reference/tickers/%s", asset.Ticker)
 
-	api.limiter.Wait(ctx)
+	if err := api.limiter.Wait(ctx); err != nil {
+		log.Panic().Err(err).Msg("rate limit failed")
+	}
+
 	resp, err := api.client.R().
 		SetResult(&respContent).
 		Get(detailsURL)
@@ -711,7 +737,10 @@ func (api *polygonAssetFetcher) assetDetail(ctx context.Context, asset *data.Ass
 	var icon []byte
 	var iconMimeType string
 	if polygonAsset.Branding.IconURL != "" {
-		api.limiter.Wait(ctx)
+		if err := api.limiter.Wait(ctx); err != nil {
+			log.Panic().Err(err).Msg("rate limit failed")
+		}
+
 		resp, err := api.client.R().Get(polygonAsset.Branding.IconURL)
 		if err != nil {
 			logger.Error().Err(err).Msg("error when fetching asset icon")
@@ -725,7 +754,10 @@ func (api *polygonAssetFetcher) assetDetail(ctx context.Context, asset *data.Ass
 	var logo []byte
 	var logoMimeType string
 	if polygonAsset.Branding.LogoURL != "" {
-		api.limiter.Wait(ctx)
+		if err := api.limiter.Wait(ctx); err != nil {
+			log.Panic().Err(err).Msg("rate limit failed")
+		}
+
 		resp, err := api.client.R().Get(polygonAsset.Branding.LogoURL)
 		if err != nil {
 			logger.Error().Err(err).Msg("error when fetching asset logo")

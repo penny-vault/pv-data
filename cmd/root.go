@@ -24,7 +24,6 @@ import (
 )
 
 var cfgFile string
-var dbUrl string
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
@@ -66,7 +65,9 @@ func init() {
 
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.pvdata.toml)")
 	infoCmd.PersistentFlags().String("dbUrl", "", "database connection string")
-	viper.BindPFlag("dbUrl", infoCmd.PersistentFlags().Lookup("dbUrl"))
+	if err := viper.BindPFlag("DBUrl", infoCmd.PersistentFlags().Lookup("dbUrl")); err != nil {
+		log.Panic().Err(err).Msg("BindPFlag for dbUrl failed")
+	}
 }
 
 // initConfig reads in config file and ENV variables if set.

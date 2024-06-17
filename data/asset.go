@@ -92,13 +92,19 @@ func (asset *Asset) SaveFiles(ctx context.Context, filer Filer) error {
 	for _, ff := range files {
 		switch ff.MimeType {
 		case "image/jpeg":
-			filer.CreateFile(ff.Name+".jpg", ff.Data)
+			if _, err := filer.CreateFile(ff.Name+".jpg", ff.Data); err != nil {
+				log.Error().Err(err).Str("Name", ff.Name).Msg("error saving jpg")
+			}
 		case "image/png":
-			filer.CreateFile(ff.Name+".png", ff.Data)
+			if _, err := filer.CreateFile(ff.Name+".png", ff.Data); err != nil {
+				log.Error().Err(err).Str("Name", ff.Name).Msg("error saving png")
+			}
 		case "image/svg+xml":
 			fallthrough
 		case "image/svg":
-			filer.CreateFile(ff.Name+".svg", ff.Data)
+			if _, err := filer.CreateFile(ff.Name+".svg", ff.Data); err != nil {
+				log.Error().Err(err).Str("Name", ff.Name).Msg("error saving svg")
+			}
 		case "":
 			// do nothing
 		default:
@@ -116,7 +122,11 @@ func (asset *Asset) SaveDB(ctx context.Context, tbl string, dbConn *pgxpool.Conn
 		return err
 	}
 
-	defer tx.Commit(ctx)
+	defer func() {
+		if err := tx.Commit(ctx); err != nil {
+			log.Error().Err(err).Msg("error committing asset transaction to database")
+		}
+	}()
 
 	listingDate := &asset.ListingDate
 	delistingDate := &asset.DelistingDate

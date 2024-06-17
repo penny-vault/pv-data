@@ -46,7 +46,11 @@ func (holiday *MarketHoliday) SaveDB(ctx context.Context, tbl string, dbConn *pg
 		return err
 	}
 
-	defer tx.Commit(ctx)
+	defer func() {
+		if err := tx.Commit(ctx); err != nil {
+			log.Error().Err(err).Msg("error committing holiday transaction to database")
+		}
+	}()
 
 	log.Debug().Object("MarketHoliday", holiday).Msg("Saving holiday to database")
 

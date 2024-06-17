@@ -80,7 +80,12 @@ func (subscription *Subscription) Delete(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+
+	defer func() {
+		if err := tx.Rollback(ctx); err != nil {
+			log.Error().Err(err).Msg("error rollingback tx")
+		}
+	}()
 
 	tables := subscription.PartitionTables()
 	tables = append(tables, subscription.DataTables...)
@@ -125,7 +130,12 @@ func (subscription *Subscription) Activate(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+
+	defer func() {
+		if err := tx.Rollback(ctx); err != nil {
+			log.Error().Err(err).Msg("error rollingback tx")
+		}
+	}()
 
 	// activate subscription entry
 	if _, err := tx.Exec(ctx, "UPDATE subscriptions SET active='t' WHERE id=$1", subscription.ID); err != nil {
@@ -159,7 +169,12 @@ func (subscription *Subscription) Deactivate(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+
+	defer func() {
+		if err := tx.Rollback(ctx); err != nil {
+			log.Error().Err(err).Msg("error rollingback tx")
+		}
+	}()
 
 	// de-activate subscription entry
 	if _, err := tx.Exec(ctx, "UPDATE subscriptions SET active='f' WHERE id=$1", subscription.ID); err != nil {
@@ -192,7 +207,12 @@ func (subscription *Subscription) Save(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+
+	defer func() {
+		if err := tx.Rollback(ctx); err != nil {
+			log.Error().Err(err).Msg("error rollingback tx")
+		}
+	}()
 
 	// create table structure for each data type this dataset produces
 	if err := subscription.createTables(ctx, tx); err != nil {
@@ -257,7 +277,12 @@ func (subscription *Subscription) ManagePartitions(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+
+	defer func() {
+		if err := tx.Rollback(ctx); err != nil {
+			log.Error().Err(err).Msg("error rollingback tx")
+		}
+	}()
 
 	// manage partitions
 	if err := subscription.managePartitionsWithTransaction(ctx, tx); err != nil {

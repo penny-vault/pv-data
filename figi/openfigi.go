@@ -154,7 +154,10 @@ func LookupFigi(assets []*data.Asset, rateLimiter *rate.Limiter) map[string]*Ope
 		})
 
 		if len(query) == 100 {
-			rateLimiter.Wait(context.Background())
+			if err := rateLimiter.Wait(context.Background()); err != nil {
+				log.Panic().Err(err).Msg("rate limiter failed")
+			}
+
 			mappingResponse, _ := mapFigis(query)
 			for _, resp := range mappingResponse {
 				for _, figiAsset := range resp.Data {
@@ -166,7 +169,10 @@ func LookupFigi(assets []*data.Asset, rateLimiter *rate.Limiter) map[string]*Ope
 	}
 
 	if len(query) > 0 {
-		rateLimiter.Wait(context.Background())
+		if err := rateLimiter.Wait(context.Background()); err != nil {
+			log.Panic().Err(err).Msg("rate limiter failed")
+		}
+
 		mappingResponse, _ := mapFigis(query)
 		for _, resp := range mappingResponse {
 			for _, figiAsset := range resp.Data {
