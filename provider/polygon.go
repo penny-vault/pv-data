@@ -18,6 +18,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -27,8 +29,10 @@ import (
 	"github.com/goccy/go-json"
 	"github.com/jackc/pgx/v5"
 	"github.com/penny-vault/pvdata/data"
+	"github.com/penny-vault/pvdata/figi"
 	"github.com/penny-vault/pvdata/library"
 	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 	"golang.org/x/time/rate"
 )
 
@@ -57,12 +61,112 @@ func (polygon *Polygon) Description() string {
 
 func (polygon *Polygon) Datasets() map[string]Dataset {
 	return map[string]Dataset{
+		"Market Holidays": {
+			Name:        "Market Holidays",
+			Description: "Get upcoming market holidays and their open/close times.",
+			DataTypes:   []*data.DataType{data.DataTypes[data.MarketHolidaysKey]},
+			DateRange: func() (time.Time, time.Time) {
+				return time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC), time.Now().UTC()
+			},
+			Fetch: func(ctx context.Context, subscription *library.Subscription, out chan<- *data.Observation, exitNotification chan<- data.RunSummary) {
+				logger := zerolog.Ctx(ctx)
+
+				runSummary := data.RunSummary{
+					StartTime:        time.Now(),
+					SubscriptionID:   subscription.ID,
+					SubscriptionName: subscription.Name,
+				}
+
+				// get a list of all active assets
+				holidays := make([]*data.MarketHoliday, 0, 10)
+
+				defer func() {
+					runSummary.EndTime = time.Now()
+					runSummary.NumObservations = len(holidays)
+					exitNotification <- runSummary
+				}()
+
+				rateLimit, err := strconv.Atoi(subscription.Config["rateLimit"])
+				if err != nil {
+					logger.Error().Err(err).Str("configRateLimit", subscription.Config["rateLimit"]).Msg("could not convert rateLimit configuration parameter to an integer")
+					return
+				}
+
+				if rateLimit <= 0 {
+					rateLimit = 5000
+				}
+
+				client := resty.New().SetQueryParam("apiKey", subscription.Config["apiKey"])
+				limiter := rate.NewLimiter(rate.Limit(float64(rateLimit)/float64(61)), 1)
+
+				// get nyc timezone
+				nyc, err := time.LoadLocation("America/New_York")
+				if err != nil {
+					logger.Panic().Err(err).Msg("could not load timezone")
+					return
+				}
+
+				// fetch upcoming market holidays
+				limiter.Wait(ctx)
+
+				respContent := make([]*polygonHoliday, 0)
+				resp, err := client.R().
+					SetResult(&respContent).
+					Get("https://api.polygon.io/v1/marketstatus/upcoming")
+				if err != nil {
+					logger.Error().Err(err).Msg("resty returned an error when querying reference/tickers")
+					return
+				}
+
+				if resp.StatusCode() >= 300 {
+					logger.Error().Int("StatusCode", resp.StatusCode()).Msg("polygon returned an invalid HTTP response")
+					return
+				}
+
+				for _, holiday := range respContent {
+					polygonDate, err := time.Parse("2006-01-02", holiday.Date)
+					if err != nil {
+						logger.Error().Err(err).Str("polygonDate", holiday.Date).Msg("could not parse date from polygon object")
+						continue
+					}
+
+					eventDate := time.Date(polygonDate.Year(), polygonDate.Month(), polygonDate.Day(), 9, 30, 0, 0, nyc)
+
+					closeTime := time.Date(polygonDate.Year(), polygonDate.Month(), polygonDate.Day(), 16, 0, 0, 0, nyc)
+					if holiday.Close != "" {
+						closeTime, err = time.Parse(time.RFC3339Nano, holiday.Close)
+						if err != nil {
+							logger.Error().Err(err).Str("polygonClose", holiday.Close).Msg("could not parse close date from polygon object")
+							return
+						}
+
+						closeTime = closeTime.In(nyc)
+					}
+
+					marketHoliday := &data.MarketHoliday{
+						Name:       holiday.Name,
+						EventDate:  eventDate,
+						Market:     holiday.Exchange,
+						EarlyClose: holiday.Status == "early-close",
+						CloseTime:  closeTime,
+					}
+
+					out <- &data.Observation{
+						MarketHoliday:    marketHoliday,
+						ObservationDate:  time.Now(),
+						SubscriptionID:   subscription.ID,
+						SubscriptionName: subscription.Name,
+					}
+				}
+			},
+		},
+
 		"Stock Tickers": {
 			Name:        "Stock Tickers",
 			Description: "Details about tradeable stocks and ETFs.",
-			DataTypes:   []*data.DataType{data.DataTypes["asset-description"]},
+			DataTypes:   []*data.DataType{data.DataTypes[data.AssetKey]},
 			DateRange: func() (time.Time, time.Time) {
-				return time.Date(1998, 1, 1, 0, 0, 0, 0, time.UTC), time.Now().UTC()
+				return time.Date(1949, 4, 19, 0, 0, 0, 0, time.UTC), time.Now().UTC()
 			},
 			Fetch: func(ctx context.Context, subscription *library.Subscription, out chan<- *data.Observation, exitNotification chan<- data.RunSummary) {
 				logger := zerolog.Ctx(ctx)
@@ -96,12 +200,11 @@ func (polygon *Polygon) Datasets() map[string]Dataset {
 				api := &polygonAssetFetcher{
 					subscription: subscription,
 					client:       resty.New().SetQueryParam("apiKey", subscription.Config["apiKey"]),
-					limiter:      rate.NewLimiter(rate.Limit(float64(rateLimit)/float64(60)), rateLimit),
+					limiter:      rate.NewLimiter(rate.Limit(float64(rateLimit)/float64(61)), 1),
 					publishChan:  out,
 				}
 
-				//for _, assetType := range []string{"CS", "ADRC", "ETF"} {
-				for _, assetType := range []string{"ADRC"} {
+				for _, assetType := range []string{"CS", "ADRC", "ETF"} {
 					if tmpAssets, err := api.assets(ctx, assetType); err != nil {
 						logger.Error().Err(err).Str("AssetType", assetType).Msg("error getting ticker information")
 						return
@@ -110,10 +213,10 @@ func (polygon *Polygon) Datasets() map[string]Dataset {
 					}
 				}
 
-				assets = assets[:1]
-
 				logger.Info().Int("Count", len(assets)).Msg("got assets from polygon")
 
+				// remove any assets that haven't been updated since our last
+				// look
 				assetDetail, err = api.filterAssetsByLastUpdated(ctx, assets)
 				if err != nil {
 					// logged by caller
@@ -121,27 +224,31 @@ func (polygon *Polygon) Datasets() map[string]Dataset {
 				}
 
 				// fetch asset details
-				logger.Info().Int("NumActive", len(assetDetail)).Msg("querying polygon for asset details")
+				logger.Info().Int("NumToQueryDetailsFor", len(assetDetail)).Msg("querying polygon for asset details")
 
-				assetDetails := api.assetDetails(ctx, assets)
+				api.assetDetails(ctx, assetDetail)
 
 				// get delisting date for inactive assets
-				delistedAssets, err := api.delistedAssets(ctx, assets)
+				err = api.delistedAssets(ctx, assets)
 				if err != nil {
 					// logged by caller
 					return
 				}
-
-				logger.Info().Int("assetDetailsCnt", len(assetDetails)).Int("delistedAssetsCnt", len(delistedAssets)).Msg("publishing assets")
-
-				api.publishAssets(assetDetails)
-				api.publishAssets(delistedAssets)
 			},
 		},
 	}
 }
 
 // Private interfaces
+
+type polygonHoliday struct {
+	Date     string `json:"date"`
+	Exchange string `json:"exchange"`
+	Name     string `json:"name"`
+	Open     string `json:"open"`
+	Close    string `json:"close"`
+	Status   string `json:"status"`
+}
 
 type polygonAssetFetcher struct {
 	subscription *library.Subscription
@@ -189,14 +296,17 @@ type polygonStock struct {
 	LastUpdated     string          `json:"last_updated_utc"`
 }
 
-func (api *polygonAssetFetcher) publishAssets(assets []*data.Asset) {
-	for _, asset := range assets {
-		api.publishChan <- &data.Observation{
-			AssetObject:      asset,
-			ObservationDate:  time.Now(),
-			SubscriptionID:   api.subscription.ID,
-			SubscriptionName: api.subscription.Name,
-		}
+func (api *polygonAssetFetcher) publish(asset *data.Asset) {
+	figi.Enrich(asset)
+	if asset.CompositeFigi == "" {
+		return
+	}
+
+	api.publishChan <- &data.Observation{
+		AssetObject:      asset,
+		ObservationDate:  time.Now(),
+		SubscriptionID:   api.subscription.ID,
+		SubscriptionName: api.subscription.Name,
 	}
 }
 
@@ -209,11 +319,14 @@ func (api *polygonAssetFetcher) assets(ctx context.Context, assetType string) ([
 	// first we query the reference endpoint which is faster than the details endpoint
 	// this gives us a list of all assets we should query details for
 	// NOTE: results are limited to stocks
+
+	// maxQueries is a protective measure to make sure we don't get into
+	// an infinite loop
 	maxQueries := 1000
 
 	nyc, err := time.LoadLocation("America/New_York")
 	if err != nil {
-		logger.Error().Err(err).Msg("could not load timezone")
+		logger.Panic().Err(err).Msg("could not load timezone")
 		return []*data.Asset{}, err
 	}
 
@@ -242,7 +355,7 @@ func (api *polygonAssetFetcher) assets(ctx context.Context, assetType string) ([
 		polygonTickers := make([]*polygonStock, 0, 1000)
 		json.Unmarshal(*respContent.Results, &polygonTickers)
 
-		logger.Info().Int("ReceivedNAssets", len(polygonTickers)).Str("AssetType", assetType).Msg("got tickers")
+		logger.Debug().Int("ReceivedNAssets", len(polygonTickers)).Str("AssetType", assetType).Msg("got tickers")
 
 		for _, ticker := range polygonTickers {
 			lastUpdated, err := time.Parse(time.RFC3339, ticker.LastUpdated)
@@ -276,7 +389,7 @@ func (api *polygonAssetFetcher) assets(ctx context.Context, assetType string) ([
 		next := respContent.Next
 		respContent.Next = ""
 
-		logger.Info().Str("Next", next).Str("AssetType", assetType).Int("ii", ii).Msg("making next query")
+		logger.Debug().Str("Next", next).Str("AssetType", assetType).Int("ii", ii).Msg("making next query")
 		api.limiter.Wait(ctx)
 		resp, err = api.client.R().
 			SetResult(&respContent).
@@ -294,6 +407,7 @@ func (api *polygonAssetFetcher) filterAssetsByLastUpdated(ctx context.Context, a
 	logger := zerolog.Ctx(ctx)
 
 	assetDetail := make([]*data.Asset, 0, len(assets))
+	assetUpdate := make([]*data.Asset, 0, len(assets))
 
 	dbConn, err := api.subscription.Library.Pool.Acquire(ctx)
 	if err != nil {
@@ -309,7 +423,8 @@ func (api *polygonAssetFetcher) filterAssetsByLastUpdated(ctx context.Context, a
 		err := dbConn.QueryRow(
 			ctx,
 			sql,
-			asset.CompositeFigi, asset.Ticker,
+			asset.CompositeFigi,
+			asset.Ticker,
 		).Scan(&lastUpdated)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -322,26 +437,46 @@ func (api *polygonAssetFetcher) filterAssetsByLastUpdated(ctx context.Context, a
 		}
 
 		if lastUpdated.After(asset.LastUpdated) {
-			assetDetail = append(assetDetail, asset)
+			assetUpdate = append(assetUpdate, asset)
 		}
+	}
+
+	// sort assetUpdate by lastupdated
+	slices.SortFunc(assetUpdate, func(a, b *data.Asset) int {
+		switch {
+		case a.LastUpdated.Before(b.LastUpdated):
+			return -1
+		case a.LastUpdated.Equal(b.LastUpdated):
+			return 0
+		default:
+			return 1
+		}
+	})
+
+	// limit updates to a max of 100 assets
+	assetUpdateLen := len(assetUpdate)
+	numAssetsToUpdate := int(math.Min(float64(assetUpdateLen), 100))
+
+	if numAssetsToUpdate > 0 {
+		assetDetail = append(assetDetail, assetUpdate[:numAssetsToUpdate]...)
 	}
 
 	return assetDetail, nil
 }
 
-func (api *polygonAssetFetcher) delistedAssets(ctx context.Context, assets []*data.Asset) ([]*data.Asset, error) {
+func (api *polygonAssetFetcher) delistedAssets(ctx context.Context, assets []*data.Asset) error {
 	logger := zerolog.Ctx(ctx)
 
 	nyc, err := time.LoadLocation("America/New_York")
 	if err != nil {
 		logger.Error().Err(err).Msg("could not load timezone")
-		return nil, err
+		return err
 	}
 
 	dbConn, err := api.subscription.Library.Pool.Acquire(ctx)
 	if err != nil {
 		logger.Error().Err(err).Msg("error getting database connection")
-		return nil, err
+		return err
 	}
 	defer dbConn.Release()
 
@@ -350,7 +485,7 @@ func (api *polygonAssetFetcher) delistedAssets(ctx context.Context, assets []*da
 		assetMap[asset.ID()] = asset
 	}
 
-	// get a list of assets that should be marked as inactive
+	// get a list of assets that are currently active in the database
 	inactive := make([]*data.Asset, 0, 50)
 	rows, err := dbConn.Query(ctx, fmt.Sprintf(`SELECT
 		ticker,
@@ -364,8 +499,6 @@ func (api *polygonAssetFetcher) delistedAssets(ctx context.Context, assets []*da
 		corporate_url,
 		sector,
 		industry,
-		icon_url,
-		logo_url,
 		sic_code,
 		cik,
 		cusips,
@@ -373,13 +506,13 @@ func (api *polygonAssetFetcher) delistedAssets(ctx context.Context, assets []*da
 		other_identifiers,
 		similar_tickers,
 		tags,
-		listed,
-		delisted,
+		coalesce(to_char(listed, 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'), '') as listed,
+		coalesce(to_char(delisted, 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'), '') as delisted,
 		last_updated
 	FROM %s WHERE active=true`, api.subscription.DataTablesMap[data.AssetKey]))
 	if err != nil {
 		logger.Error().Err(err).Msg("error when querying database for active tickers")
-		return nil, err
+		return err
 	}
 
 	var dbActiveAssets []*data.Asset
@@ -388,6 +521,8 @@ func (api *polygonAssetFetcher) delistedAssets(ctx context.Context, assets []*da
 		logger.Error().Err(err).Msg("error when scanning values into dbActiveAssets")
 	}
 
+	// for all active database assets that are not in the response
+	// of active assets in polygon, add to the potentially inactive list
 	for _, asset := range dbActiveAssets {
 		if _, ok := assetMap[asset.ID()]; !ok {
 			inactive = append(inactive, asset)
@@ -396,92 +531,121 @@ func (api *polygonAssetFetcher) delistedAssets(ctx context.Context, assets []*da
 
 	if len(inactive) == 0 {
 		// no inactive assets to consider
-		return []*data.Asset{}, nil
+		return nil
 	}
 
+	// build a lookup map of potential inactive assets
 	inactiveMap := make(map[string]*data.Asset, len(inactive))
 	for _, asset := range inactive {
+		log.Info().Str("InactivePossible", asset.ID()).Send()
 		inactiveMap[asset.ID()] = asset
 	}
 
-	var respContent polygonResponse
-	api.limiter.Wait(ctx)
-	resp, err := api.client.R().
-		SetQueryParam("active", "false").
-		SetQueryParam("sort", "last_updated_utc").
-		SetQueryParam("order", "desc").
-		SetQueryParam("limit", "1000").
-		SetResult(&respContent).
-		Get("https://api.polygon.io/v3/reference/tickers")
-	if err != nil {
-		logger.Error().Err(err).Msg("error when retrieving inactive assets")
-	}
+	deactivated := make(map[string]*data.Asset, len(inactiveMap))
 
-	maxQueries := 30
-	updatedCount := 0
-
-	for ii := 0; ii < maxQueries; ii++ {
-		if resp.StatusCode() >= 300 {
-			logger.Error().Int("StatusCode", resp.StatusCode()).Str("ResponseBody", string(resp.Body())).
-				Str("URL", "https://api.polygon.io/v3/reference/tickers").
-				Msg("received an invalid status code when querying polygon reference/tickers endpoint")
-			return assets, fmt.Errorf("%w (%d): %s", ErrInvalidStatusCode, resp.StatusCode(), string(resp.Body()))
-		}
-
-		// de-serealize stock content
-		polygonAssets := make([]*polygonStock, 0, 1000)
-		json.Unmarshal(*respContent.Results, &polygonAssets)
-
-		logger.Info().Int("ReceivedNAssets", len(polygonAssets)).Msg("got inactive tickers")
-
-		for _, polygonAsset := range polygonAssets {
-			fmt.Printf("%+v\n", polygonAsset)
-			lastUpdated, err := time.Parse(time.RFC3339, polygonAsset.LastUpdated)
-			if err != nil {
-				logger.Error().Err(err).Str("Ticker", polygonAsset.Ticker).Msg("could not parse last updated string for tickers")
-			}
-
-			lastUpdated = lastUpdated.In(nyc)
-
-			asset := data.Asset{
-				Ticker:        polygonAsset.Ticker,
-				CompositeFigi: polygonAsset.CompositeFIGI,
-			}
-
-			if inactiveAsset, ok := inactiveMap[asset.ID()]; ok {
-				inactiveAsset.DelistingDate = strings.Split(polygonAsset.DelistDate, "T")[0]
-				inactiveAsset.LastUpdated = lastUpdated
-				updatedCount++
-			}
-		}
-
-		// check if all results have been returned
-		if respContent.Next == "" || updatedCount >= len(inactive) {
-			break
-		}
-
-		// get next result
-		next := respContent.Next
-		respContent.Next = ""
-
-		logger.Info().Str("Next", next).Int("ii", ii).Msg("making next query")
+	for _, assetType := range []string{"CS", "ADRC", "ETF"} {
+		// query polygon for inactive assets
+		var respContent polygonResponse
 		api.limiter.Wait(ctx)
-		resp, err = api.client.R().
+		resp, err := api.client.R().
+			SetQueryParam("active", "false").
+			SetQueryParam("sort", "last_updated_utc").
+			SetQueryParam("order", "desc").
+			SetQueryParam("limit", "1000").
+			SetQueryParam("type", assetType).
 			SetResult(&respContent).
-			Get(next)
+			Get("https://api.polygon.io/v3/reference/tickers")
 		if err != nil {
-			logger.Error().Err(err).Msg("resty returned an error when querying reference/tickers")
-			return inactive, err
+			logger.Error().Err(err).Msg("error when retrieving inactive assets")
+		}
+
+		// limit the number of queries as a safety precaution to ensure
+		// that we are not in an infinite loop
+		maxQueries := 300
+		updatedCount := 0
+
+		for ii := 0; ii < maxQueries; ii++ {
+			if resp.StatusCode() >= 300 {
+				logger.Error().Int("StatusCode", resp.StatusCode()).Str("ResponseBody", string(resp.Body())).
+					Str("URL", "https://api.polygon.io/v3/reference/tickers").
+					Msg("received an invalid status code when querying polygon reference/tickers endpoint")
+				return fmt.Errorf("%w (%d): %s", ErrInvalidStatusCode, resp.StatusCode(), string(resp.Body()))
+			}
+
+			// de-serealize stock content
+			polygonAssets := make([]*polygonStock, 0, 1000)
+			json.Unmarshal(*respContent.Results, &polygonAssets)
+
+			logger.Debug().Int("ReceivedNAssets", len(polygonAssets)).Msg("got inactive tickers")
+
+			for _, polygonAsset := range polygonAssets {
+				lastUpdated, err := time.Parse(time.RFC3339, polygonAsset.LastUpdated)
+				if err != nil {
+					logger.Error().Err(err).Str("Ticker", polygonAsset.Ticker).Msg("could not parse last updated string for tickers")
+				}
+
+				lastUpdated = lastUpdated.In(nyc)
+
+				asset := data.Asset{
+					Ticker:        polygonAsset.Ticker,
+					CompositeFigi: polygonAsset.CompositeFIGI,
+				}
+
+				// lookup the completely filled out asset and update its values
+				// publish the updated asset
+				if inactiveAsset, ok := inactiveMap[asset.ID()]; ok {
+					inactiveAsset.DelistingDate = strings.Split(polygonAsset.DelistDate, "T")[0]
+					inactiveAsset.LastUpdated = lastUpdated
+					inactiveAsset.Active = false
+					deactivated[asset.ID()] = inactiveAsset
+					api.publish(inactiveAsset)
+					updatedCount++
+				}
+			}
+
+			// check if all results have been returned
+			if respContent.Next == "" || updatedCount >= len(inactive) {
+				break
+			}
+
+			// get next result
+			next := respContent.Next
+			respContent.Next = ""
+
+			logger.Debug().Str("Next", next).Int("ii", ii).Msg("making next query")
+			api.limiter.Wait(ctx)
+			resp, err = api.client.R().
+				SetResult(&respContent).
+				Get(next)
+			if err != nil {
+				logger.Error().Err(err).Msg("resty returned an error when querying reference/tickers")
+				return err
+			}
 		}
 	}
 
-	return inactive, nil
+	// find the disjoint set of Assets that are possibly inactive and those
+	// that were deactivated. Assets can only appear in the aforementioned set
+	// for a limited period of time before we mark them as inactive
+	for _, possibleInactiveAsset := range inactiveMap {
+		if _, ok := deactivated[possibleInactiveAsset.ID()]; !ok {
+			// asset was not de-activated ... check to see how old it is
+			timeSinceLastUpdate := time.Since(possibleInactiveAsset.LastUpdated)
+			if timeSinceLastUpdate > 14*24*time.Hour {
+				// if asset hasn't been updated in the last 14 days mark as
+				// inactive
+				possibleInactiveAsset.LastUpdated = time.Now().In(nyc)
+				possibleInactiveAsset.Active = false
+				api.publish(possibleInactiveAsset)
+			}
+		}
+	}
+
+	return nil
 }
 
-func (api *polygonAssetFetcher) assetDetails(ctx context.Context, assets []*data.Asset) []*data.Asset {
+func (api *polygonAssetFetcher) assetDetails(ctx context.Context, assets []*data.Asset) {
 	logger := zerolog.Ctx(ctx)
-
-	assetDetails := make([]*data.Asset, 0, len(assets))
 
 	sometimes := rate.Sometimes{Interval: 60 * time.Second}
 	started := time.Now()
@@ -493,16 +657,14 @@ func (api *polygonAssetFetcher) assetDetails(ctx context.Context, assets []*data
 			continue
 		}
 
-		assetDetails = append(assetDetails, fullAsset)
+		api.publish(fullAsset)
 
 		sometimes.Do(func() {
-			secondsPerItem := time.Since(started) / (time.Duration(idx+1) * time.Second)
+			secondsPerItem := time.Since(started) / time.Duration(idx+1)
 			timeLeft := secondsPerItem * time.Duration(len(assets)-idx)
-			logger.Info().Int("Completed", idx+1).Str("ETA", timeLeft.String()).Msg("asset detail progress")
+			logger.Info().Int("Completed", idx+1).Str("SinceStarted", time.Since(started).Round(time.Second).String()).Int("NumAssetsLeft", len(assets)-idx).Str("secondsPerItem", secondsPerItem.Round(time.Second).String()).Str("ETA", timeLeft.Round(time.Second).String()).Msg("asset detail progress")
 		})
 	}
-
-	return assetDetails
 }
 
 func (api *polygonAssetFetcher) assetDetail(ctx context.Context, asset *data.Asset) (*data.Asset, error) {
@@ -547,6 +709,7 @@ func (api *polygonAssetFetcher) assetDetail(ctx context.Context, asset *data.Ass
 
 	// fetch icon and logo
 	var icon []byte
+	var iconMimeType string
 	if polygonAsset.Branding.IconURL != "" {
 		api.limiter.Wait(ctx)
 		resp, err := api.client.R().Get(polygonAsset.Branding.IconURL)
@@ -556,9 +719,11 @@ func (api *polygonAssetFetcher) assetDetail(ctx context.Context, asset *data.Ass
 		}
 
 		icon = resp.Body()
+		iconMimeType = resp.Header().Get("Content-Type")
 	}
 
 	var logo []byte
+	var logoMimeType string
 	if polygonAsset.Branding.LogoURL != "" {
 		api.limiter.Wait(ctx)
 		resp, err := api.client.R().Get(polygonAsset.Branding.LogoURL)
@@ -568,6 +733,7 @@ func (api *polygonAssetFetcher) assetDetail(ctx context.Context, asset *data.Ass
 		}
 
 		logo = resp.Body()
+		logoMimeType = resp.Header().Get("Content-Type")
 	}
 
 	// build Asset object
@@ -585,7 +751,10 @@ func (api *polygonAssetFetcher) assetDetail(ctx context.Context, asset *data.Ass
 		SIC:                  sicCode,
 		CorporateUrl:         polygonAsset.CorporateURL,
 		Icon:                 icon,
+		IconMimeType:         iconMimeType,
 		Logo:                 logo,
+		LogoMimeType:         logoMimeType,
+		ListingDate:          polygonAsset.ListDate,
 		LastUpdated:          asset.LastUpdated,
 	}
 

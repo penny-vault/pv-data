@@ -14,11 +14,14 @@
 // limitations under the License.
 package data
 
-import "strings"
+import (
+	"os"
+	"path"
+	"strings"
+)
 
 type Filer interface {
 	CreateFile(name string, data []byte) (string, error)
-	RemoveFile(name string) error
 }
 
 type FSFiler struct {
@@ -26,11 +29,9 @@ type FSFiler struct {
 }
 
 func (fs *FSFiler) CreateFile(name string, data []byte) (string, error) {
-	return "", nil
-}
-
-func (fs *FSFiler) RemoveFile(name string) error {
-	return nil
+	filePath := path.Join(fs.BasePath, name)
+	err := os.WriteFile(filePath, data, 0644)
+	return filePath, err
 }
 
 func NewFilerFromString(spec string) Filer {

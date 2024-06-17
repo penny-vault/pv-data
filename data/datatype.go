@@ -30,7 +30,8 @@ type RunSummary struct {
 }
 
 type Observation struct {
-	AssetObject *Asset
+	AssetObject   *Asset
+	MarketHoliday *MarketHoliday
 
 	ObservationDate  time.Time
 	SubscriptionID   uuid.UUID
@@ -46,7 +47,11 @@ type DataType struct {
 }
 
 const (
-	AssetKey = "asset-description"
+	AssetKey          = "asset-description"
+	EODKey            = "eod"
+	MetricKey         = "metric"
+	FundamentalsKey   = "fundamentals"
+	MarketHolidaysKey = "market-holidays"
 )
 
 var DataTypes = map[string]*DataType{
@@ -64,8 +69,6 @@ description TEXT,
 corporate_url TEXT,
 sector TEXT,
 industry TEXT,
-icon_url TEXT,
-logo_url TEXT,
 sic_code INT,
 cik TEXT,
 cusips text[],
@@ -94,8 +97,8 @@ CREATE INDEX %[1]s_search_idx ON %[1]s USING GIN (search);`,
 		Version:       0,
 		IsPartitioned: false,
 	},
-	"eod": {
-		Name: "eod",
+	EODKey: {
+		Name: EODKey,
 		Schema: `CREATE TABLE %[1]s (
 ticker         CHARACTER VARYING(10) NOT NULL,
 composite_figi CHARACTER(12)         NOT NULL,
@@ -124,8 +127,8 @@ EXECUTE PROCEDURE adj_close_default();`,
 		Version:       0,
 		IsPartitioned: true,
 	},
-	"metric": {
-		Name: "metric",
+	MetricKey: {
+		Name: MetricKey,
 		Schema: `CREATE TABLE %[1]s (
 ticker         CHARACTER VARYING(10) NOT NULL,
 composite_figi CHARACTER(12)         NOT NULL,
@@ -149,8 +152,8 @@ CREATE INDEX %[1]s_ticker_idx ON %[1]s(ticker);`,
 		Version:       0,
 		IsPartitioned: true,
 	},
-	"fundamentals": {
-		Name: "fundamentals",
+	FundamentalsKey: {
+		Name: FundamentalsKey,
 		Schema: `CREATE TABLE %[1]s (
 event_date DATE,
 ticker TEXT,
@@ -267,6 +270,20 @@ PRIMARY KEY (composite_figi, dim, event_date)
 CREATE INDEX %[1]s_ticker_idx ON %[1]s(ticker, dim);
 CREATE INDEX %[1]s_event_date_idx ON %[1]s(event_date, dim);
 CREATE INDEX %[1]s_calendar_date_idx ON %[1]s(calendar_date, dim);`,
+		Migrations:    []string{},
+		Version:       0,
+		IsPartitioned: false,
+	},
+	MarketHolidaysKey: {
+		Name: MarketHolidaysKey,
+		Schema: `CREATE TABLE %[1]s (
+holiday TEXT NOT NULL,
+event_date DATE NOT NULL,
+market VARCHAR(25) NOT NULL,
+early_close BOOLEAN NOT NULL DEFAULT false,
+close_time TIME NOT NULL DEFAULT '16:00:00',
+PRIMARY KEY (event_date, market)
+);`,
 		Migrations:    []string{},
 		Version:       0,
 		IsPartitioned: false,

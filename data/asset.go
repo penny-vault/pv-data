@@ -16,10 +16,12 @@ package data
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
 
@@ -33,6 +35,7 @@ const (
 	MutualFund   AssetType = "MF"
 	ADRC         AssetType = "ADRC"
 	FRED         AssetType = "FRED"
+	SYNTH        AssetType = "SYNTH"
 	UnknownAsset AssetType = "Unknown"
 )
 
@@ -45,16 +48,16 @@ type Asset struct {
 	CompositeFigi        string    `json:"composite_figi" toml:"composite_figi" parquet:"name=composite_figi, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
 	ShareClassFigi       string    `json:"share_class_figi" toml:"share_class_figi" parquet:"name=share_class_figi, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
 	Active               bool      `json:"active" toml:"active" parquet:"name=active, type=BOOLEAN"`
-	CUSIP                []string  `json:"cusip" parquet:"name=cusip, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
-	ISIN                 []string  `json:"isin" parquet:"name=isin, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
+	CUSIP                []string  `json:"cusips" parquet:"name=cusip, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY" db:"cusips"`
+	ISIN                 []string  `json:"isins" parquet:"name=isin, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY" db:"isins"`
 	CIK                  string    `json:"cik" parquet:"name=cik, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
-	SIC                  int       `json:"sic"`
-	ListingDate          string    `json:"listing_date" toml:"listing_date" parquet:"name=listing_date, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
-	DelistingDate        string    `json:"delisting_date" toml:"delisting_date" parquet:"name=delisting_date, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
+	SIC                  int       `json:"sic" db:"sic_code"`
+	ListingDate          string    `json:"listing_date" toml:"listing_date" parquet:"name=listing_date, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY" db:"listed"`
+	DelistingDate        string    `json:"delisting_date" toml:"delisting_date" parquet:"name=delisting_date, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY" db:"delisted"`
 	Industry             string    `json:"industry" parquet:"name=industry, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
 	Sector               string    `json:"sector" parquet:"name=sector, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
 	Icon                 []byte    `parquet:"name=icon, type=BYTE_ARRAY"`
-	IconMimeType         string    `parquet:"name=icon_mime_type, tyle=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
+	IconMimeType         string    `parquet:"name=icon_mime_type, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
 	Logo                 []byte    `parquet:"name=logo, type=BYTE_ARRAY"`
 	LogoMimeType         string    `parquet:"name=logo_mime_type, tyle=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
 	CorporateUrl         string    `json:"corporate_url" toml:"corporate_url" parquet:"name=corporate_url, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
@@ -69,15 +72,64 @@ func (asset *Asset) ID() string {
 	return fmt.Sprintf("%s:%s", asset.Ticker, asset.CompositeFigi)
 }
 
-func (asset *Asset) Save(ctx context.Context, tbl string, dbConn *pgxpool.Conn) error {
+func (asset *Asset) SaveFiles(ctx context.Context, filer Filer) error {
+	type File struct {
+		Name     string
+		MimeType string
+		Data     []byte
+	}
+
+	files := []File{{
+		Name:     asset.CompositeFigi + "-icon",
+		MimeType: asset.IconMimeType,
+		Data:     asset.Icon,
+	}, {
+		Name:     asset.CompositeFigi + "-logo",
+		MimeType: asset.LogoMimeType,
+		Data:     asset.Logo,
+	}}
+
+	for _, ff := range files {
+		switch ff.MimeType {
+		case "image/jpeg":
+			filer.CreateFile(ff.Name+".jpg", ff.Data)
+		case "image/png":
+			filer.CreateFile(ff.Name+".png", ff.Data)
+		case "image/svg+xml":
+			fallthrough
+		case "image/svg":
+			filer.CreateFile(ff.Name+".svg", ff.Data)
+		case "":
+			// do nothing
+		default:
+			log.Error().Str("MimeType", ff.MimeType).Msg("unknown image mimetype")
+			return errors.New("unknown mimetype")
+		}
+	}
+
+	return nil
+}
+
+func (asset *Asset) SaveDB(ctx context.Context, tbl string, dbConn *pgxpool.Conn) error {
 	tx, err := dbConn.Begin(ctx)
 	if err != nil {
 		return err
 	}
+
 	defer tx.Commit(ctx)
 
-	iconUrl := ""
-	logoUrl := ""
+	listingDate := &asset.ListingDate
+	delistingDate := &asset.DelistingDate
+
+	if asset.ListingDate == "" {
+		listingDate = nil
+	}
+
+	if asset.DelistingDate == "" {
+		delistingDate = nil
+	}
+
+	log.Debug().Object("Asset", asset).Msg("Saving asset to database")
 
 	sql := fmt.Sprintf(`INSERT INTO %[1]s (
 		"ticker",
@@ -91,8 +143,6 @@ func (asset *Asset) Save(ctx context.Context, tbl string, dbConn *pgxpool.Conn) 
 		"corporate_url",
 		"sector",
 		"industry",
-		"icon_url",
-		"logo_url",
 		"sic_code",
 		"cik",
 		"cusips",
@@ -105,7 +155,7 @@ func (asset *Asset) Save(ctx context.Context, tbl string, dbConn *pgxpool.Conn) 
 		"last_updated"
 	) VALUES (
 		$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-		$13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23
+		$13, $14, $15, $16, $17, $18, $19, $20, $21
 	) ON CONFLICT ON CONSTRAINT %[1]s_pkey DO UPDATE SET
 		primary_exchange = EXCLUDED.primary_exchange,
 		active = EXCLUDED.active,
@@ -114,8 +164,6 @@ func (asset *Asset) Save(ctx context.Context, tbl string, dbConn *pgxpool.Conn) 
 		corporate_url = EXCLUDED.corporate_url,
 		sector = EXCLUDED.sector,
 		industry = EXCLUDED.industry,
-		icon_url = EXCLUDED.icon_url,
-		logo_url = EXCLUDED.logo_url,
 		sic_code = EXCLUDED.sic_code,
 		cik = EXCLUDED.cik,
 		cusips = EXCLUDED.cusips,
@@ -126,13 +174,12 @@ func (asset *Asset) Save(ctx context.Context, tbl string, dbConn *pgxpool.Conn) 
 		listed = EXCLUDED.listed,
 		delisted = EXCLUDED.delisted,
 		last_updated = EXCLUDED.last_updated`, tbl)
+
 	_, err = tx.Exec(ctx, sql, asset.Ticker, asset.CompositeFigi, asset.ShareClassFigi,
 		asset.PrimaryExchange, asset.AssetType, asset.Active, asset.Name, asset.Description,
-		asset.CorporateUrl, asset.Sector, asset.Industry, iconUrl, logoUrl, asset.SIC, asset.CIK,
+		asset.CorporateUrl, asset.Sector, asset.Industry, asset.SIC, asset.CIK,
 		asset.CUSIP, asset.ISIN, asset.OtherIdentifiers, asset.SimilarTickers, asset.Tags,
-		/*asset.ListingDate*/ nil,
-		/*asset.DelistingDate*/ nil,
-		asset.LastUpdated)
+		listingDate, delistingDate, asset.LastUpdated)
 
 	if err != nil {
 		log.Error().Err(err).Str("SQL", sql).Msg("save asset to DB failed")
@@ -140,4 +187,33 @@ func (asset *Asset) Save(ctx context.Context, tbl string, dbConn *pgxpool.Conn) 
 	}
 
 	return nil
+}
+
+func (asset *Asset) MarshalZerologObject(e *zerolog.Event) {
+	e.Str("Ticker", asset.Ticker)
+	e.Str("Name", asset.Name)
+	e.Str("Description", asset.Description)
+	e.Str("PrimaryExchange", asset.PrimaryExchange)
+	e.Str("AssetType", string(asset.AssetType))
+	e.Str("CompositeFigi", asset.CompositeFigi)
+	e.Str("ShareClassFigi", asset.ShareClassFigi)
+	e.Bool("Active", asset.Active)
+	e.Strs("CUSIP", asset.CUSIP)
+	e.Strs("ISIN", asset.ISIN)
+	e.Str("CIK", asset.CIK)
+	e.Int("SIC", asset.SIC)
+	e.Str("ListingDate", asset.ListingDate)
+	e.Str("DelistingDate", asset.DelistingDate)
+	e.Str("Industry", asset.Industry)
+	e.Str("Sector", asset.Sector)
+	e.Str("CorporateURL", asset.CorporateUrl)
+	e.Str("HeadquartersLocation", asset.HeadquartersLocation)
+
+	for key, val := range asset.OtherIdentifiers {
+		e.Str(key, val)
+	}
+
+	e.Strs("Tags", asset.Tags)
+	e.Strs("SimilarTickers", asset.SimilarTickers)
+	e.Time("LastUpdated", asset.LastUpdated)
 }

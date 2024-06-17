@@ -177,13 +177,29 @@ func (myLibrary *Library) SaveObservations(queue <-chan *data.Observation, wg *s
 			continue
 		}
 
-		switch {
-		case elem.AssetObject != nil:
-			if err := elem.AssetObject.Save(ctx, subscription.DataTablesMap[data.AssetKey], conn); err != nil {
+		var filer data.Filer
+		if filerPath, ok := subscription.Config["filer"]; ok {
+			filer = data.NewFilerFromString(filerPath)
+		}
+
+		if elem.AssetObject != nil {
+			if filer != nil {
+				err := elem.AssetObject.SaveFiles(ctx, filer)
+				if err != nil {
+					log.Error().Err(err).Msg("cannot save asset files")
+					continue
+				}
+			}
+
+			if err := elem.AssetObject.SaveDB(ctx, subscription.DataTablesMap[data.AssetKey], conn); err != nil {
 				log.Error().Err(err).Msg("cannot save asset to database")
 			}
-		default:
-			log.Error().Msg("blank observation received")
+		}
+
+		if elem.MarketHoliday != nil {
+			if err := elem.MarketHoliday.SaveDB(ctx, subscription.DataTablesMap[data.MarketHolidaysKey], conn); err != nil {
+				log.Error().Err(err).Msg("cannot save market holiday to database")
+			}
 		}
 	}
 }

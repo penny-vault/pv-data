@@ -3,17 +3,26 @@ BEGIN;
 -- Enum Types
 
 CREATE TYPE assettype AS ENUM (
-    'Common Stock',
-    'Preferred Stock',
+    'CS',   -- Common Stock
+    'PS',   -- Preferred Stock
     'ETF',  -- Exchange Traded Fund
     'ETN',  -- Exchange Traded Note
     'MF',   -- Mutual Fund
     'CEF',  -- Closed End Fund
     'ADRC', -- American Depository Receipt Common
-    'FRED',
-    'Synthetic History'
+    'FRED', -- Federal Reserve Economic Data
+    'SYNTH' -- Synthetic Data
 );
-CREATE TYPE datatype AS ENUM ('asset-description', 'analyst-rating', 'eod', 'fundamental', 'earnings-estimate', 'custom');
+
+CREATE TYPE datatype AS ENUM (
+    'asset-description',
+    'analyst-rating',
+    'eod',
+    'fundamental',
+    'earnings-estimate',
+    'market-holidays',
+    'custom'
+);
 
 -- Tables
 

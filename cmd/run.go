@@ -28,7 +28,7 @@ sequentially (ignoring any set schedule).`,
 		ctx := context.Background()
 
 		// load the library
-		myLibrary, err := library.NewFromDB(ctx, viper.GetString("dbUrl"))
+		myLibrary, err := library.NewFromDB(ctx, viper.GetString("db.url"))
 		if err != nil {
 			log.Fatal().Err(err).Msg("could not connect to library")
 		}

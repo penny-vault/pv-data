@@ -24,7 +24,7 @@ var unsubscribeCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := context.Background()
 
-		myLibrary, err := library.NewFromDB(ctx, viper.GetString("dbUrl"))
+		myLibrary, err := library.NewFromDB(ctx, viper.GetString("db.url"))
 		if err != nil {
 			log.Fatal().Err(err).Msg("could not load library info")
 		}
