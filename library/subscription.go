@@ -16,6 +16,7 @@ package library
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/user"
 	"strings"
@@ -280,17 +281,21 @@ func (subscription *Subscription) ManagePartitions(ctx context.Context) error {
 
 	defer func() {
 		if err := tx.Rollback(ctx); err != nil {
-			log.Error().Err(err).Msg("error rollingback tx")
+			if !errors.Is(err, pgx.ErrTxClosed) {
+				log.Error().Err(err).Msg("error rollingback tx")
+			}
 		}
 	}()
 
 	// manage partitions
 	if err := subscription.managePartitionsWithTransaction(ctx, tx); err != nil {
+		log.Error().Err(err).Msg("error encountered when creating partitions")
 		return err
 	}
 
 	// commit to database
 	if err := tx.Commit(ctx); err != nil {
+		log.Error().Err(err).Msg("error committing manage partitions transaction")
 		return err
 	}
 
@@ -331,8 +336,8 @@ func (subscription *Subscription) managePartitionsWithTransaction(ctx context.Co
 		today := time.Now()
 		year := today.Year() + 1
 
-		for ii := 2015; ii < year; ii++ {
-			dates = append(dates, dateRange{Start: ii, End: ii + 1})
+		for ii := 2015; ii < year; ii += 5 {
+			dates = append(dates, dateRange{Start: ii, End: ii + 5})
 		}
 
 		// create tables for expected date ranges
@@ -340,7 +345,7 @@ func (subscription *Subscription) managePartitionsWithTransaction(ctx context.Co
 			tableName := fmt.Sprintf("%s_%d_%d", dataTable, dt.Start, dt.End)
 			sql := fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s PARTITION OF %s FOR VALUES FROM ('%d-01-01') TO ('%d-01-01');",
 				tableName, dataTable, dt.Start, dt.End)
-			log.Info().Str("SQL", sql).Msg("creating partition table")
+			log.Debug().Str("SQL", sql).Msg("creating partition table")
 			if _, err := tx.Exec(ctx, sql); err != nil {
 				return err
 			}

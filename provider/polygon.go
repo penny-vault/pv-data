@@ -304,8 +304,13 @@ func (api *polygonAssetFetcher) publish(asset *data.Asset) {
 		return
 	}
 
+	// make a copy of the asset and fix ticker to match pv-data standard
+	// e.g. BRK.A -> BRK/A
+	asset2 := *asset
+	asset2.Ticker = strings.ReplaceAll(asset2.Ticker, ".", "/")
+
 	api.publishChan <- &data.Observation{
-		AssetObject:      asset,
+		AssetObject:      &asset2,
 		ObservationDate:  time.Now(),
 		SubscriptionID:   api.subscription.ID,
 		SubscriptionName: api.subscription.Name,

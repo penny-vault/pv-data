@@ -3,6 +3,7 @@ module github.com/penny-vault/pvdata
 go 1.22.1
 
 require (
+	github.com/alphadose/haxmap v1.4.0
 	github.com/go-resty/resty/v2 v2.13.1
 	github.com/goccy/go-json v0.10.3
 	github.com/golang-migrate/migrate/v4 v4.17.1

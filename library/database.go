@@ -201,6 +201,12 @@ func (myLibrary *Library) SaveObservations(queue <-chan *data.Observation, wg *s
 				log.Error().Err(err).Msg("cannot save market holiday to database")
 			}
 		}
+
+		if elem.EodQuote != nil {
+			if err := elem.EodQuote.SaveDB(ctx, subscription.DataTablesMap[data.EODKey], conn); err != nil {
+				log.Error().Err(err).Msg("cannot save eod quote to database")
+			}
+		}
 	}
 }
 

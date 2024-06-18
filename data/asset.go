@@ -20,9 +20,11 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/georgysavva/scany/v2/pgxscan"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+	"github.com/spf13/viper"
 )
 
 type AssetType string
@@ -66,6 +68,53 @@ type Asset struct {
 	Tags                 []string
 	SimilarTickers       []string  `json:"similar_tickers" toml:"similar_tickers" parquet:"name=similar_tickers, type=MAP, convertedtype=LIST, valuetype=BYTE_ARRAY, valueconvertedtype=UTF8"`
 	LastUpdated          time.Time `json:"last_updated" parquet:"name=last_updated, type=INT64"`
+}
+
+func ActiveAssets(ctx context.Context, dbConn *pgxpool.Conn) []*Asset {
+	assetTable := viper.GetString("default.asset_table")
+	if assetTable == "" {
+		log.Panic().Msg("default.asset_table not set list of active assets is not possible")
+		return nil
+	}
+
+	sql := fmt.Sprintf(`SELECT
+		ticker,
+		composite_figi,
+		share_class_figi,
+		primary_exchange,
+		asset_type,
+		active,
+		name,
+		description,
+		corporate_url,
+		sector,
+		industry,
+		sic_code,
+		cik,
+		cusips,
+		isins,
+		other_identifiers,
+		similar_tickers,
+		tags,
+		coalesce(to_char(listed, 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'), '') as listed,
+		coalesce(to_char(delisted, 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'), '') as delisted,
+		last_updated
+	FROM %s
+	WHERE active=true`, assetTable)
+
+	rows, err := dbConn.Query(ctx, sql)
+	if err != nil {
+		log.Error().Err(err).Str("SQL", sql).Msg("save asset to DB failed")
+		return nil
+	}
+
+	var dbActiveAssets []*Asset
+	err = pgxscan.ScanAll(&dbActiveAssets, rows)
+	if err != nil {
+		log.Error().Err(err).Msg("error when scanning values into dbActiveAssets")
+	}
+
+	return dbActiveAssets
 }
 
 func (asset *Asset) ID() string {

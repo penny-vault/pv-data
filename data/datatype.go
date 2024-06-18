@@ -32,6 +32,7 @@ type RunSummary struct {
 type Observation struct {
 	AssetObject   *Asset
 	MarketHoliday *MarketHoliday
+	EodQuote      *Eod
 
 	ObservationDate  time.Time
 	SubscriptionID   uuid.UUID
@@ -111,7 +112,6 @@ adj_close      NUMERIC(12, 4)        NOT NULL DEFAULT 0.0,
 volume         BIGINT                NOT NULL DEFAULT 0.0,
 dividend       NUMERIC(12, 4)        NOT NULL DEFAULT 0.0,
 split_factor   NUMERIC(9, 6)         NOT NULL DEFAULT 1.0,
-CHECK (LENGTH(TRIM(BOTH composite_figi)) = 12),
 PRIMARY KEY (composite_figi, event_date)
 ) PARTITION BY RANGE (event_date);
 
