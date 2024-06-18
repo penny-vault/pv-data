@@ -61,7 +61,10 @@ sequentially (ignoring any set schedule).`,
 			)
 
 			// create any needed partitions
-			subscription.ManagePartitions(ctx)
+			err = subscription.ManagePartitions(ctx)
+			if err != nil {
+				log.Error().Err(err).Msg("ManagePartitions returned an error")
+			}
 
 			if subProvider, ok = provider.Map[subscription.Provider]; !ok {
 				log.Fatal().Str("ProviderKey", subscription.Provider).Msg("subscription is mis-configured, provider not found")
