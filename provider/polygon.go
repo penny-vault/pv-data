@@ -68,99 +68,7 @@ func (polygon *Polygon) Datasets() map[string]Dataset {
 			DateRange: func() (time.Time, time.Time) {
 				return time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC), time.Now().UTC()
 			},
-			Fetch: func(ctx context.Context, subscription *library.Subscription, out chan<- *data.Observation, exitNotification chan<- data.RunSummary) {
-				logger := zerolog.Ctx(ctx)
-
-				runSummary := data.RunSummary{
-					StartTime:        time.Now(),
-					SubscriptionID:   subscription.ID,
-					SubscriptionName: subscription.Name,
-				}
-
-				// get a list of all active assets
-				holidays := make([]*data.MarketHoliday, 0, 10)
-
-				defer func() {
-					runSummary.EndTime = time.Now()
-					runSummary.NumObservations = len(holidays)
-					exitNotification <- runSummary
-				}()
-
-				rateLimit, err := strconv.Atoi(subscription.Config["rateLimit"])
-				if err != nil {
-					logger.Error().Err(err).Str("configRateLimit", subscription.Config["rateLimit"]).Msg("could not convert rateLimit configuration parameter to an integer")
-					return
-				}
-
-				if rateLimit <= 0 {
-					rateLimit = 5000
-				}
-
-				client := resty.New().SetQueryParam("apiKey", subscription.Config["apiKey"])
-				limiter := rate.NewLimiter(rate.Limit(float64(rateLimit)/float64(61)), 1)
-
-				// get nyc timezone
-				nyc, err := time.LoadLocation("America/New_York")
-				if err != nil {
-					logger.Panic().Err(err).Msg("could not load timezone")
-					return
-				}
-
-				// fetch upcoming market holidays
-				if err := limiter.Wait(ctx); err != nil {
-					log.Panic().Err(err).Msg("rate limit wait failed")
-				}
-
-				respContent := make([]*polygonHoliday, 0)
-				resp, err := client.R().
-					SetResult(&respContent).
-					Get("https://api.polygon.io/v1/marketstatus/upcoming")
-				if err != nil {
-					logger.Error().Err(err).Msg("resty returned an error when querying reference/tickers")
-					return
-				}
-
-				if resp.StatusCode() >= 300 {
-					logger.Error().Int("StatusCode", resp.StatusCode()).Msg("polygon returned an invalid HTTP response")
-					return
-				}
-
-				for _, holiday := range respContent {
-					polygonDate, err := time.Parse("2006-01-02", holiday.Date)
-					if err != nil {
-						logger.Error().Err(err).Str("polygonDate", holiday.Date).Msg("could not parse date from polygon object")
-						continue
-					}
-
-					eventDate := time.Date(polygonDate.Year(), polygonDate.Month(), polygonDate.Day(), 9, 30, 0, 0, nyc)
-
-					closeTime := time.Date(polygonDate.Year(), polygonDate.Month(), polygonDate.Day(), 16, 0, 0, 0, nyc)
-					if holiday.Close != "" {
-						closeTime, err = time.Parse(time.RFC3339Nano, holiday.Close)
-						if err != nil {
-							logger.Error().Err(err).Str("polygonClose", holiday.Close).Msg("could not parse close date from polygon object")
-							return
-						}
-
-						closeTime = closeTime.In(nyc)
-					}
-
-					marketHoliday := &data.MarketHoliday{
-						Name:       holiday.Name,
-						EventDate:  eventDate,
-						Market:     holiday.Exchange,
-						EarlyClose: holiday.Status == "early-close",
-						CloseTime:  closeTime,
-					}
-
-					out <- &data.Observation{
-						MarketHoliday:    marketHoliday,
-						ObservationDate:  time.Now(),
-						SubscriptionID:   subscription.ID,
-						SubscriptionName: subscription.Name,
-					}
-				}
-			},
+			Fetch: downloadPolygonMarketHolidays,
 		},
 
 		"Stock Tickers": {
@@ -170,73 +78,7 @@ func (polygon *Polygon) Datasets() map[string]Dataset {
 			DateRange: func() (time.Time, time.Time) {
 				return time.Date(1949, 4, 19, 0, 0, 0, 0, time.UTC), time.Now().UTC()
 			},
-			Fetch: func(ctx context.Context, subscription *library.Subscription, out chan<- *data.Observation, exitNotification chan<- data.RunSummary) {
-				logger := zerolog.Ctx(ctx)
-
-				runSummary := data.RunSummary{
-					StartTime:        time.Now(),
-					SubscriptionID:   subscription.ID,
-					SubscriptionName: subscription.Name,
-				}
-
-				// get a list of all active assets
-				assets := make([]*data.Asset, 0, 6000)
-				var assetDetail []*data.Asset
-
-				defer func() {
-					runSummary.EndTime = time.Now()
-					runSummary.NumObservations = len(assetDetail)
-					exitNotification <- runSummary
-				}()
-
-				rateLimit, err := strconv.Atoi(subscription.Config["rateLimit"])
-				if err != nil {
-					logger.Error().Err(err).Str("configRateLimit", subscription.Config["rateLimit"]).Msg("could not convert rateLimit configuration parameter to an integer")
-					return
-				}
-
-				if rateLimit <= 0 {
-					rateLimit = 5000
-				}
-
-				api := &polygonAssetFetcher{
-					subscription: subscription,
-					client:       resty.New().SetQueryParam("apiKey", subscription.Config["apiKey"]),
-					limiter:      rate.NewLimiter(rate.Limit(float64(rateLimit)/float64(61)), 1),
-					publishChan:  out,
-				}
-
-				for _, assetType := range []string{"CS", "ADRC", "ETF"} {
-					if tmpAssets, err := api.assets(ctx, assetType); err != nil {
-						logger.Error().Err(err).Str("AssetType", assetType).Msg("error getting ticker information")
-						return
-					} else {
-						assets = append(assets, tmpAssets...)
-					}
-				}
-
-				logger.Info().Int("Count", len(assets)).Msg("got assets from polygon")
-
-				// remove any assets that haven't been updated since our last
-				// look
-				assetDetail, err = api.filterAssetsByLastUpdated(ctx, assets)
-				if err != nil {
-					// logged by caller
-					return
-				}
-
-				// fetch asset details
-				logger.Info().Int("NumToQueryDetailsFor", len(assetDetail)).Msg("querying polygon for asset details")
-
-				api.assetDetails(ctx, assetDetail)
-
-				// get delisting date for inactive assets
-				err = api.delistedAssets(ctx, assets)
-				if err != nil {
-					// logged by caller
-					return
-				}
-			},
+			Fetch: downloadPolygonAssets,
 		},
 	}
 }
@@ -298,8 +140,173 @@ type polygonStock struct {
 	LastUpdated     string          `json:"last_updated_utc"`
 }
 
+func downloadPolygonAssets(ctx context.Context, subscription *library.Subscription, out chan<- *data.Observation, exitNotification chan<- data.RunSummary) {
+	logger := zerolog.Ctx(ctx)
+
+	runSummary := data.RunSummary{
+		StartTime:        time.Now(),
+		SubscriptionID:   subscription.ID,
+		SubscriptionName: subscription.Name,
+	}
+
+	// get a list of all active assets
+	assets := make([]*data.Asset, 0, 6000)
+	var assetDetail []*data.Asset
+
+	defer func() {
+		runSummary.EndTime = time.Now()
+		runSummary.NumObservations = len(assetDetail)
+		exitNotification <- runSummary
+	}()
+
+	rateLimit, err := strconv.Atoi(subscription.Config["rateLimit"])
+	if err != nil {
+		logger.Error().Err(err).Str("configRateLimit", subscription.Config["rateLimit"]).Msg("could not convert rateLimit configuration parameter to an integer")
+		return
+	}
+
+	if rateLimit <= 0 {
+		rateLimit = 5000
+	}
+
+	api := &polygonAssetFetcher{
+		subscription: subscription,
+		client:       resty.New().SetQueryParam("apiKey", subscription.Config["apiKey"]),
+		limiter:      rate.NewLimiter(rate.Limit(float64(rateLimit)/float64(61)), 1),
+		publishChan:  out,
+	}
+
+	for _, assetType := range []string{"CS", "ADRC", "ETF"} {
+		if tmpAssets, err := api.assets(ctx, assetType); err != nil {
+			logger.Error().Err(err).Str("AssetType", assetType).Msg("error getting ticker information")
+			return
+		} else {
+			assets = append(assets, tmpAssets...)
+		}
+	}
+
+	logger.Info().Int("Count", len(assets)).Msg("got assets from polygon")
+
+	// remove any assets that haven't been updated since our last
+	// look
+	assetDetail, err = api.filterAssetsByLastUpdated(ctx, assets)
+	if err != nil {
+		// logged by caller
+		return
+	}
+
+	// fetch asset details
+	logger.Info().Int("NumToQueryDetailsFor", len(assetDetail)).Msg("querying polygon for asset details")
+
+	api.assetDetails(ctx, assetDetail)
+
+	// get delisting date for inactive assets
+	err = api.delistedAssets(ctx, assets)
+	if err != nil {
+		// logged by caller
+		return
+	}
+}
+
+func downloadPolygonMarketHolidays(ctx context.Context, subscription *library.Subscription, out chan<- *data.Observation, exitNotification chan<- data.RunSummary) {
+	logger := zerolog.Ctx(ctx)
+
+	runSummary := data.RunSummary{
+		StartTime:        time.Now(),
+		SubscriptionID:   subscription.ID,
+		SubscriptionName: subscription.Name,
+	}
+
+	// get a list of all active assets
+	holidays := make([]*data.MarketHoliday, 0, 10)
+
+	defer func() {
+		runSummary.EndTime = time.Now()
+		runSummary.NumObservations = len(holidays)
+		exitNotification <- runSummary
+	}()
+
+	rateLimit, err := strconv.Atoi(subscription.Config["rateLimit"])
+	if err != nil {
+		logger.Error().Err(err).Str("configRateLimit", subscription.Config["rateLimit"]).Msg("could not convert rateLimit configuration parameter to an integer")
+		return
+	}
+
+	if rateLimit <= 0 {
+		rateLimit = 5000
+	}
+
+	client := resty.New().SetQueryParam("apiKey", subscription.Config["apiKey"])
+	limiter := rate.NewLimiter(rate.Limit(float64(rateLimit)/float64(61)), 1)
+
+	// get nyc timezone
+	nyc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		logger.Panic().Err(err).Msg("could not load timezone")
+		return
+	}
+
+	// fetch upcoming market holidays
+	if err := limiter.Wait(ctx); err != nil {
+		log.Panic().Err(err).Msg("rate limit wait failed")
+	}
+
+	respContent := make([]*polygonHoliday, 0)
+	resp, err := client.R().
+		SetResult(&respContent).
+		Get("https://api.polygon.io/v1/marketstatus/upcoming")
+	if err != nil {
+		logger.Error().Err(err).Msg("resty returned an error when querying reference/tickers")
+		return
+	}
+
+	if resp.StatusCode() >= 300 {
+		logger.Error().Int("StatusCode", resp.StatusCode()).Msg("polygon returned an invalid HTTP response")
+		return
+	}
+
+	for _, holiday := range respContent {
+		polygonDate, err := time.Parse("2006-01-02", holiday.Date)
+		if err != nil {
+			logger.Error().Err(err).Str("polygonDate", holiday.Date).Msg("could not parse date from polygon object")
+			continue
+		}
+
+		eventDate := time.Date(polygonDate.Year(), polygonDate.Month(), polygonDate.Day(), 9, 30, 0, 0, nyc)
+
+		closeTime := time.Date(polygonDate.Year(), polygonDate.Month(), polygonDate.Day(), 16, 0, 0, 0, nyc)
+		if holiday.Close != "" {
+			closeTime, err = time.Parse(time.RFC3339Nano, holiday.Close)
+			if err != nil {
+				logger.Error().Err(err).Str("polygonClose", holiday.Close).Msg("could not parse close date from polygon object")
+				return
+			}
+
+			closeTime = closeTime.In(nyc)
+		}
+
+		marketHoliday := &data.MarketHoliday{
+			Name:       holiday.Name,
+			EventDate:  eventDate,
+			Market:     holiday.Exchange,
+			EarlyClose: holiday.Status == "early-close",
+			CloseTime:  closeTime,
+		}
+
+		out <- &data.Observation{
+			MarketHoliday:    marketHoliday,
+			ObservationDate:  time.Now(),
+			SubscriptionID:   subscription.ID,
+			SubscriptionName: subscription.Name,
+		}
+	}
+}
+
 func (api *polygonAssetFetcher) publish(asset *data.Asset) {
-	figi.Enrich(asset)
+	if asset.CompositeFigi == "" {
+		figi.Enrich(asset)
+	}
+
 	if asset.CompositeFigi == "" {
 		return
 	}
@@ -307,7 +314,7 @@ func (api *polygonAssetFetcher) publish(asset *data.Asset) {
 	// make a copy of the asset and fix ticker to match pv-data standard
 	// e.g. BRK.A -> BRK/A
 	asset2 := *asset
-	asset2.Ticker = strings.ReplaceAll(asset2.Ticker, ".", "/")
+	asset2.Ticker = polygonTicker2PvTicker(asset2.Ticker)
 
 	api.publishChan <- &data.Observation{
 		AssetObject:      &asset2,
@@ -433,15 +440,32 @@ func (api *polygonAssetFetcher) filterAssetsByLastUpdated(ctx context.Context, a
 	}
 	defer dbConn.Release()
 
+	// Enrich any assets that have no figi
+	toEnrich := make([]*data.Asset, 0, len(assets)/2)
+	for _, asset := range assets {
+		if asset.CompositeFigi == "" {
+			toEnrich = append(toEnrich, asset)
+		}
+	}
+
+	log.Debug().Int("NumAssetsToEnrich", len(toEnrich)).Msg("Enriching assets with FIGI")
+	figi.Enrich(toEnrich...)
+
 	// for each asset determine if details need to be queried
 	for _, asset := range assets {
 		var lastUpdated time.Time
+
+		if asset.CompositeFigi == "" {
+			log.Warn().Str("Ticker", asset.Ticker).Str("Name", asset.Name).Msg("skipping ticker due to unknown figi")
+			continue
+		}
+
 		sql := fmt.Sprintf("SELECT COALESCE(last_updated, '0001-01-01'::timestamp) as last_updated FROM %s WHERE composite_figi=$1 AND ticker=$2 LIMIT 1", api.subscription.DataTablesMap[data.AssetKey])
 		err := dbConn.QueryRow(
 			ctx,
 			sql,
 			asset.CompositeFigi,
-			asset.Ticker,
+			polygonTicker2PvTicker(asset.Ticker),
 		).Scan(&lastUpdated)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -453,7 +477,7 @@ func (api *polygonAssetFetcher) filterAssetsByLastUpdated(ctx context.Context, a
 			return nil, err
 		}
 
-		if lastUpdated.After(asset.LastUpdated) {
+		if lastUpdated.Before(asset.LastUpdated) {
 			assetUpdate = append(assetUpdate, asset)
 		}
 	}
@@ -796,4 +820,8 @@ func (api *polygonAssetFetcher) assetDetail(ctx context.Context, asset *data.Ass
 	}
 
 	return assetDetail, nil
+}
+
+func polygonTicker2PvTicker(ticker string) string {
+	return strings.ReplaceAll(ticker, ".", "/")
 }

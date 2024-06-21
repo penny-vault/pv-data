@@ -73,6 +73,8 @@ func mapFigis(query []*OpenFigiQuery) ([]*MappingResponse, error) {
 		SetResult(&mappingResponse).
 		Post(OPENFIGI_MAPPING_URL)
 
+	log.Debug().Str("URL", OPENFIGI_MAPPING_URL).Int("NumTickers", len(query)).Msg("map tickers to FIGIs")
+
 	if err != nil {
 		log.Error().Err(err).Msg("OpenFigi api called errored out")
 		return []*MappingResponse{}, err
