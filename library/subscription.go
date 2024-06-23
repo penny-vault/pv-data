@@ -84,7 +84,9 @@ func (subscription *Subscription) Delete(ctx context.Context) error {
 
 	defer func() {
 		if err := tx.Rollback(ctx); err != nil {
-			log.Error().Err(err).Msg("error rollingback tx")
+			if !errors.Is(err, pgx.ErrTxClosed) {
+				log.Error().Err(err).Msg("error rollingback tx")
+			}
 		}
 	}()
 
@@ -134,7 +136,9 @@ func (subscription *Subscription) Activate(ctx context.Context) error {
 
 	defer func() {
 		if err := tx.Rollback(ctx); err != nil {
-			log.Error().Err(err).Msg("error rollingback tx")
+			if !errors.Is(err, pgx.ErrTxClosed) {
+				log.Error().Err(err).Msg("error rollingback tx")
+			}
 		}
 	}()
 
@@ -173,7 +177,9 @@ func (subscription *Subscription) Deactivate(ctx context.Context) error {
 
 	defer func() {
 		if err := tx.Rollback(ctx); err != nil {
-			log.Error().Err(err).Msg("error rollingback tx")
+			if !errors.Is(err, pgx.ErrTxClosed) {
+				log.Error().Err(err).Msg("error rollingback tx")
+			}
 		}
 	}()
 
@@ -211,7 +217,9 @@ func (subscription *Subscription) Save(ctx context.Context) error {
 
 	defer func() {
 		if err := tx.Rollback(ctx); err != nil {
-			log.Error().Err(err).Msg("error rollingback tx")
+			if !errors.Is(err, pgx.ErrTxClosed) {
+				log.Error().Err(err).Msg("error rollingback tx")
+			}
 		}
 	}()
 

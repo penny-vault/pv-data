@@ -207,6 +207,12 @@ func (myLibrary *Library) SaveObservations(queue <-chan *data.Observation, wg *s
 				log.Error().Err(err).Msg("cannot save eod quote to database")
 			}
 		}
+
+		if elem.Fundamental != nil {
+			if err := elem.Fundamental.SaveDB(ctx, subscription.DataTablesMap[data.FundamentalsKey], conn); err != nil {
+				log.Error().Err(err).Msg("cannot save fundamental to database")
+			}
+		}
 	}
 }
 
