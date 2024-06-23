@@ -38,6 +38,15 @@ import (
 type Tiingo struct {
 }
 
+var tiingoExchangeMap = map[string]data.Exchange{
+	"BATS":      data.BATSExchange,
+	"NASDAQ":    data.NasdaqExchange,
+	"NMFQS":     data.NMFQSExchange,
+	"NYSE":      data.NYSEExchange,
+	"NYSE ARCA": data.ARCAExchange,
+	"NYSE MKT":  data.NYSEMktExchange,
+}
+
 func (tiingo *Tiingo) Name() string {
 	return "tiingo"
 }
@@ -67,7 +76,7 @@ func (tiingo *Tiingo) Datasets() map[string]Dataset {
 
 		"Stock Tickers": {
 			Name:        "Stock Tickers",
-			Description: "Details about tradeable stocks and ETFs.",
+			Description: "Details about tradeable stocks, ADRs, Mutual Funds and ETFs.",
 			DataTypes:   []*data.DataType{data.DataTypes[data.AssetKey]},
 			DateRange: func() (time.Time, time.Time) {
 				return time.Date(2014, 1, 1, 0, 0, 0, 0, time.UTC), time.Now().UTC()
@@ -229,6 +238,13 @@ func downloadTiingoAssets(ctx context.Context, subscription *library.Subscriptio
 		exitNotification <- runSummary
 	}()
 
+	// get nyc timezone
+	nyc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		logger.Panic().Err(err).Msg("could not load timezone")
+		return
+	}
+
 	tickerUrl := "https://apimedia.tiingo.com/docs/tiingo/daily/supported_tickers.zip"
 	client := resty.New()
 	assets := []*tiingoAsset{}
@@ -275,13 +291,13 @@ func downloadTiingoAssets(ctx context.Context, subscription *library.Subscriptio
 		return
 	}
 
-	validExchanges := []string{"AMEX", "BATS", "NASDAQ", "NMFQS", "NYSE", "NYSE ARCA", "NYSE MKT"}
+	validExchanges := []string{"BATS", "NASDAQ", "NMFQS", "NYSE", "NYSE ARCA", "NYSE MKT"}
 	commonAssets := make([]*data.Asset, 0, 25000)
-	for _, asset := range assets {
+	for _, tiingoAsset := range assets {
 		// remove assets on invalid exchanges
 		keep := false
 		for _, exchange := range validExchanges {
-			if asset.Exchange == exchange {
+			if tiingoAsset.Exchange == exchange {
 				keep = true
 			}
 		}
@@ -290,51 +306,85 @@ func downloadTiingoAssets(ctx context.Context, subscription *library.Subscriptio
 		}
 
 		// If both the start date and end date are not set skip it
-		if asset.StartDate == "" && asset.EndDate == "" {
+		if tiingoAsset.StartDate == "" && tiingoAsset.EndDate == "" {
 			continue
 		}
 
 		// filter out tickers we should ignore
-		if tiingoIgnoreTicker(asset.Ticker) {
+		if tiingoIgnoreTicker(tiingoAsset.Ticker) {
 			continue
 		}
 
-		asset.Ticker = strings.ReplaceAll(asset.Ticker, "-", "/")
-		myAsset := &data.Asset{
-			Ticker:          asset.Ticker,
-			ListingDate:     asset.StartDate,
-			DelistingDate:   asset.EndDate,
-			PrimaryExchange: asset.Exchange,
+		tiingoAsset.Ticker = strings.ReplaceAll(tiingoAsset.Ticker, "-", "/")
+		pvAsset := &data.Asset{
+			Ticker:          tiingoAsset.Ticker,
+			ListingDate:     tiingoAsset.StartDate,
+			DelistingDate:   tiingoAsset.EndDate,
+			PrimaryExchange: tiingoExchangeMap[tiingoAsset.Exchange],
+			LastUpdated:     time.Now(),
 		}
 
-		switch asset.AssetType {
+		switch tiingoAsset.AssetType {
 		case "Stock":
-			myAsset.AssetType = data.CommonStock
+			pvAsset.AssetType = data.CommonStock
 		case "ETF":
-			myAsset.AssetType = data.ETF
+			pvAsset.AssetType = data.ETF
 		case "Mutual Fund":
-			myAsset.AssetType = data.MutualFund
+			pvAsset.AssetType = data.MutualFund
 		}
 
-		if asset.EndDate != "" {
-			endDate, err := time.Parse("2006-01-02", asset.EndDate)
+		if tiingoAsset.EndDate != "" {
+			endDate, err := time.Parse("2006-01-02", tiingoAsset.EndDate)
 			if err != nil {
-				log.Warn().Str("EndDate", asset.EndDate).Err(err).Msg("could not parse end date")
+				log.Warn().Str("EndDate", tiingoAsset.EndDate).Err(err).Msg("could not parse end date")
 			}
 
-			now := time.Now()
+			endDate = endDate.In(nyc)
+
+			now := time.Now().In(nyc)
 			age := now.Sub(endDate)
 			if age < (time.Hour * 24 * 7) {
-				myAsset.DelistingDate = ""
+				pvAsset.DelistingDate = ""
+			} else {
+				pvAsset.DelistingDate = endDate.Format(time.RFC3339)
 			}
 		}
 
-		if myAsset.DelistingDate == "" {
-			commonAssets = append(commonAssets, myAsset)
+		if pvAsset.DelistingDate == "" {
+			pvAsset.Active = true
+			commonAssets = append(commonAssets, pvAsset)
 		}
 	}
 
+	log.Debug().Int("NumAssetsToEnrich", len(commonAssets)).Msg("number of assets to enrich with Composite FIGI")
 	figi.Enrich(commonAssets...)
+
+	pvAssetMap := make(map[string]*data.Asset, len(commonAssets))
+	for _, asset := range commonAssets {
+		if asset.CompositeFigi != "" {
+			pvAssetMap[asset.CompositeFigi] = asset
+		}
+	}
+
+	// get a list of assets already in the database
+	conn, err := subscription.Library.Pool.Acquire(ctx)
+	if err != nil {
+		log.Panic().Msg("could not acquire database connection")
+	}
+
+	defer conn.Release()
+
+	activeDBAssets := data.ActiveAssets(ctx, conn, subscription.DataTablesMap[data.AssetKey])
+
+	// determine which assets are no longer active
+	for _, dbAsset := range activeDBAssets {
+		_, ok := pvAssetMap[dbAsset.CompositeFigi]
+		if !ok {
+			dbAsset.Active = false
+			dbAsset.DelistingDate = time.Now().In(nyc).Format(time.RFC3339)
+			commonAssets = append(commonAssets, dbAsset)
+		}
+	}
 
 	for _, asset := range commonAssets {
 		if asset.CompositeFigi == "" {

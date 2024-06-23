@@ -38,6 +38,12 @@ import (
 
 var (
 	ErrInvalidStatusCode = errors.New("invalid status code received")
+	polygonExchangeMap   = map[string]data.Exchange{
+		"XNAS": data.NasdaqExchange,
+		"BATS": data.BATSExchange,
+		"XASE": data.NYSEMktExchange,
+		"XNYS": data.NYSEExchange,
+	}
 )
 
 type Polygon struct {
@@ -391,7 +397,7 @@ func (api *polygonAssetFetcher) assets(ctx context.Context, assetType string) ([
 				Name:            ticker.Name,
 				CompositeFigi:   ticker.CompositeFIGI,
 				ShareClassFigi:  ticker.ShareClassFIGI,
-				PrimaryExchange: ticker.PrimaryExchange,
+				PrimaryExchange: polygonExchangeMap[ticker.PrimaryExchange],
 				AssetType:       data.AssetType(ticker.Type),
 				LastUpdated:     lastUpdated,
 				CIK:             ticker.CIK,
@@ -805,7 +811,7 @@ func (api *polygonAssetFetcher) assetDetail(ctx context.Context, asset *data.Ass
 		Name:                 polygonAsset.Name,
 		Description:          polygonAsset.Description,
 		Active:               polygonAsset.Active,
-		PrimaryExchange:      polygonAsset.PrimaryExchange,
+		PrimaryExchange:      polygonExchangeMap[polygonAsset.PrimaryExchange],
 		AssetType:            data.AssetType(polygonAsset.Type),
 		HeadquartersLocation: location,
 		CIK:                  polygonAsset.CIK,

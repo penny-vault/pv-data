@@ -38,14 +38,29 @@ const (
 	ADRC         AssetType = "ADRC"
 	FRED         AssetType = "FRED"
 	SYNTH        AssetType = "SYNTH"
+	INDEX        AssetType = "INDEX"
 	UnknownAsset AssetType = "Unknown"
+)
+
+type Exchange string
+
+const (
+	NasdaqExchange  Exchange = "XNAS"
+	NYSEExchange    Exchange = "XNYS"
+	BATSExchange    Exchange = "BATS"
+	NYSEMktExchange Exchange = "XASE"
+	NMFQSExchange   Exchange = "NMFQS"
+	ARCAExchange    Exchange = "ARCX"
+	IndexExchange   Exchange = "INDEX"
+	OTCExchange     Exchange = "OTC"
+	UnknownExchange Exchange = "UNK"
 )
 
 type Asset struct {
 	Ticker               string    `json:"ticker" parquet:"name=ticker, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
 	Name                 string    `json:"name" parquet:"name=name, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
 	Description          string    `json:"description" parquet:"name=description, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
-	PrimaryExchange      string    `json:"primary_exchange" toml:"primary_exchange" parquet:"name=primary_exchange, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
+	PrimaryExchange      Exchange  `json:"primary_exchange" toml:"primary_exchange" parquet:"name=primary_exchange, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
 	AssetType            AssetType `json:"asset_type" toml:"asset_type" parquet:"name=asset_type, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
 	CompositeFigi        string    `json:"composite_figi" toml:"composite_figi" parquet:"name=composite_figi, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
 	ShareClassFigi       string    `json:"share_class_figi" toml:"share_class_figi" parquet:"name=share_class_figi, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
@@ -70,11 +85,16 @@ type Asset struct {
 	LastUpdated          time.Time `json:"last_updated" parquet:"name=last_updated, type=INT64"`
 }
 
-func ActiveAssets(ctx context.Context, dbConn *pgxpool.Conn) []*Asset {
-	assetTable := viper.GetString("default.asset_table")
-	if assetTable == "" {
-		log.Panic().Msg("default.asset_table not set list of active assets is not possible")
-		return nil
+func ActiveAssets(ctx context.Context, dbConn *pgxpool.Conn, tables ...string) []*Asset {
+	var assetTable string
+	if len(tables) == 0 {
+		assetTable = viper.GetString("default.asset_table")
+		if assetTable == "" {
+			log.Panic().Msg("default.asset_table not set list of active assets is not possible")
+			return nil
+		}
+	} else {
+		assetTable = tables[0]
 	}
 
 	sql := fmt.Sprintf(`SELECT
@@ -166,6 +186,10 @@ func (asset *Asset) SaveFiles(ctx context.Context, filer Filer) error {
 }
 
 func (asset *Asset) SaveDB(ctx context.Context, tbl string, dbConn *pgxpool.Conn) error {
+	if asset.CompositeFigi == "" {
+		return nil
+	}
+
 	tx, err := dbConn.Begin(ctx)
 	if err != nil {
 		return err
@@ -252,7 +276,7 @@ func (asset *Asset) MarshalZerologObject(e *zerolog.Event) {
 	e.Str("Ticker", asset.Ticker)
 	e.Str("Name", asset.Name)
 	e.Str("Description", asset.Description)
-	e.Str("PrimaryExchange", asset.PrimaryExchange)
+	e.Str("PrimaryExchange", string(asset.PrimaryExchange))
 	e.Str("AssetType", string(asset.AssetType))
 	e.Str("CompositeFigi", asset.CompositeFigi)
 	e.Str("ShareClassFigi", asset.ShareClassFigi)
