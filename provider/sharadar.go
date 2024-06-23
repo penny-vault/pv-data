@@ -63,19 +63,6 @@ func (sharadar *Sharadar) Datasets() map[string]Dataset {
 
 // Private interface
 
-type ndlResponseTickers struct {
-	DataTable ndlDataTableTickers `json:"datatable"`
-	Meta      ndlMeta             `json:"meta"`
-}
-
-type ndlMeta struct {
-	Next string `json:"next_cursor_id"`
-}
-
-type ndlDataTableTickers struct {
-	Data []sharadarTicker `json:"data"`
-}
-
 type sharadarTicker struct {
 	PermaTicker    int64
 	Ticker         string
