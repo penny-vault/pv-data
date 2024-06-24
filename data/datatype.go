@@ -34,6 +34,7 @@ type Observation struct {
 	MarketHoliday *MarketHoliday
 	EodQuote      *Eod
 	Fundamental   *Fundamental
+	Metric        *Metric
 
 	ObservationDate  time.Time
 	SubscriptionID   uuid.UUID
@@ -134,14 +135,13 @@ EXECUTE PROCEDURE adj_close_default();`,
 ticker         CHARACTER VARYING(10) NOT NULL,
 composite_figi CHARACTER(12)         NOT NULL,
 event_date     DATE                  NOT NULL,
-market_cap     NUMERIC(12, 4)        NOT NULL DEFAULT 0.0,
-ev             NUMERIC(12, 4)        NOT NULL DEFAULT 0.0,
-pe             NUMERIC(12, 4)        NOT NULL DEFAULT 0.0,
-pb             NUMERIC(12, 4)        NOT NULL DEFAULT 0.0,
-ps             NUMERIC(12, 4)        NOT NULL DEFAULT 0.0,
-ev_ebit        NUMERIC(12, 4)        NOT NULL DEFAULT 0.0,
-ev_ebitda      NUMERIC(12, 4)        NOT NULL DEFAULT 0.0,
-asset_type     assettype             NOT NULL DEFAULT 0.0,
+market_cap     BIGINT                NOT NULL DEFAULT 0.0,
+ev             BIGINT                NOT NULL DEFAULT 0.0,
+pe             REAL                  NOT NULL DEFAULT 0.0,
+pb             REAL                  NOT NULL DEFAULT 0.0,
+ps             REAL                  NOT NULL DEFAULT 0.0,
+ev_ebit        REAL                  NOT NULL DEFAULT 0.0,
+ev_ebitda      REAL                  NOT NULL DEFAULT 0.0,
 sp500          BOOLEAN               DEFAULT false,
 CHECK (LENGTH(TRIM(BOTH composite_figi)) = 12),
 PRIMARY KEY (composite_figi, event_date)

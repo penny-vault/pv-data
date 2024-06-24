@@ -980,8 +980,10 @@ func (fundamental *Fundamental) SaveDB(ctx context.Context, tbl string, dbConn *
 
 	if err != nil {
 		log.Error().Err(err).Str("SQL", sql).Msg("save fundamental to DB failed")
-		return err
+		if err2 := tx.Rollback(ctx); err2 != nil {
+			log.Error().Err(err).Msg("error rollingback tx")
+		}
 	}
 
-	return nil
+	return err
 }

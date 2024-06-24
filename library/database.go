@@ -213,6 +213,12 @@ func (myLibrary *Library) SaveObservations(queue <-chan *data.Observation, wg *s
 				log.Error().Err(err).Msg("cannot save fundamental to database")
 			}
 		}
+
+		if elem.Metric != nil {
+			if err := elem.Metric.SaveDB(ctx, subscription.DataTablesMap[data.MetricKey], conn); err != nil {
+				log.Error().Err(err).Msg("cannot save metric to database")
+			}
+		}
 	}
 }
 
