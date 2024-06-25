@@ -219,6 +219,12 @@ func (myLibrary *Library) SaveObservations(queue <-chan *data.Observation, wg *s
 				log.Error().Err(err).Msg("cannot save metric to database")
 			}
 		}
+
+		if elem.EconomicIndicator != nil {
+			if err := elem.EconomicIndicator.SaveDB(ctx, subscription.DataTablesMap[data.EconomicIndicatorKey], conn); err != nil {
+				log.Error().Err(err).Msg("cannot save economic indicator to database")
+			}
+		}
 	}
 }
 

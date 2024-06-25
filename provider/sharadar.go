@@ -34,7 +34,7 @@ func (sharadar *Sharadar) ConfigDescription() map[string]string {
 }
 
 func (sharadar *Sharadar) Description() string {
-	return `The Polygon.io Stocks API provides REST endpoints that let you query the latest market data from all US stock exchanges. You can also find data on company financials, stock market holidays, corporate actions, and more.`
+	return `Sharadar publishes fundamentals, daily metrics, and other investment data via the Nasdaq Data Link API`
 }
 
 func (sharadar *Sharadar) Datasets() map[string]Dataset {

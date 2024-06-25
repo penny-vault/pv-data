@@ -59,7 +59,7 @@ func (tiingo *Tiingo) ConfigDescription() map[string]string {
 }
 
 func (tiingo *Tiingo) Description() string {
-	return `The Polygon.io Stocks API provides REST endpoints that let you query the latest market data from all US stock exchanges. You can also find data on company financials, stock market holidays, corporate actions, and more.`
+	return `Tiingo provides EOD, Realtime, News and Fundamental data for stocks. Tiingo built a custom data processing engine that prioritizes performance, cleanliness, and completeness.`
 }
 
 func (tiingo *Tiingo) Datasets() map[string]Dataset {

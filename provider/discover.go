@@ -15,6 +15,7 @@
 package provider
 
 var Map = map[string]Provider{
+	"fred":     &Fred{},
 	"polygon":  &Polygon{},
 	"sharadar": &Sharadar{},
 	"tiingo":   &Tiingo{},

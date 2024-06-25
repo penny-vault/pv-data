@@ -22,6 +22,7 @@ CREATE TYPE datatype AS ENUM (
     'earnings-estimate',
     'market-holidays',
     'metric',
+    'economic-indicator',
     'custom'
 );
 

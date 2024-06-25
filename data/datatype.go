@@ -21,20 +21,29 @@ import (
 	"github.com/google/uuid"
 )
 
+type StatusType int
+
+const (
+	RunFailed StatusType = iota
+	RunSuccess
+)
+
 type RunSummary struct {
 	StartTime        time.Time
 	EndTime          time.Time
 	NumObservations  int
+	Status           StatusType
 	SubscriptionID   uuid.UUID
 	SubscriptionName string
 }
 
 type Observation struct {
-	AssetObject   *Asset
-	MarketHoliday *MarketHoliday
-	EodQuote      *Eod
-	Fundamental   *Fundamental
-	Metric        *Metric
+	AssetObject       *Asset
+	MarketHoliday     *MarketHoliday
+	EodQuote          *Eod
+	Fundamental       *Fundamental
+	Metric            *Metric
+	EconomicIndicator *EconomicIndicator
 
 	ObservationDate  time.Time
 	SubscriptionID   uuid.UUID
@@ -50,11 +59,12 @@ type DataType struct {
 }
 
 const (
-	AssetKey          = "asset-description"
-	EODKey            = "eod"
-	MetricKey         = "metric"
-	FundamentalsKey   = "fundamental"
-	MarketHolidaysKey = "market-holidays"
+	AssetKey             = "asset-description"
+	EODKey               = "eod"
+	MetricKey            = "metric"
+	FundamentalsKey      = "fundamental"
+	MarketHolidaysKey    = "market-holidays"
+	EconomicIndicatorKey = "economic-indicator"
 )
 
 var DataTypes = map[string]*DataType{
@@ -128,6 +138,18 @@ EXECUTE PROCEDURE adj_close_default();`,
 		Migrations:    []string{},
 		Version:       0,
 		IsPartitioned: true,
+	},
+	EconomicIndicatorKey: {
+		Name: EconomicIndicatorKey,
+		Schema: `CREATE TABLE %[1]s (
+			series     CHARACTER VARYING(24) NOT NULL,
+			event_date DATE                  NOT NULL,
+			value      REAL                  NOT NULL,
+			PRIMARY KEY (series, event_date)
+		);`,
+		Migrations:    []string{},
+		Version:       0,
+		IsPartitioned: false,
 	},
 	MetricKey: {
 		Name: MetricKey,

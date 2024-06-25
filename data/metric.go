@@ -50,7 +50,7 @@ func (metric *Metric) SaveDB(ctx context.Context, tbl string, dbConn *pgxpool.Co
 
 	defer func() {
 		if err := tx.Commit(ctx); err != nil {
-			log.Error().Err(err).Msg("error committing asset transaction to database")
+			log.Error().Err(err).Msg("error committing metric transaction to database")
 		}
 	}()
 
