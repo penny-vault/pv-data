@@ -17,13 +17,13 @@ CREATE TYPE assettype AS ENUM (
 CREATE TYPE datatype AS ENUM (
     'asset-description',
     'analyst-rating',
+    'custom'
+    'economic-indicator',
     'eod',
     'fundamental',
-    'earnings-estimate',
     'market-holidays',
     'metric',
-    'economic-indicator',
-    'custom'
+    'rating'
 );
 
 -- Tables
@@ -74,6 +74,8 @@ CREATE TABLE dataframe (
     UNIQUE(name)
 );
 
+-- Functions
+
 CREATE OR REPLACE FUNCTION adj_close_default()
   RETURNS trigger
   LANGUAGE plpgsql AS
@@ -83,5 +85,28 @@ BEGIN
    RETURN NEW;
 END
 $func$;
+
+CREATE VIEW market_holidays AS SELECT generate_series(date'2024-01-01', date'2024-01-01');
+
+CREATE OR REPLACE FUNCTION trading_days(DATE, DATE)
+RETURNS SETOF DATE
+LANGUAGE SQL
+AS $func$
+  SELECT dt::date FROM generate_series($1, $2, interval '1' day) as t(dt) WHERE extract(dow FROM dt) BETWEEN 1 AND 5 AND dt NOT IN (SELECT event_date FROM market_holidays WHERE market='NYSE')
+$func$;
+
+DROP VIEW market_holidays;
+
+CREATE OR REPLACE FUNCTION locf_state(FLOAT, FLOAT)
+RETURNS FLOAT
+LANGUAGE SQL
+AS $func$
+  SELECT COALESCE($2,$1)
+$func$;
+
+CREATE AGGREGATE locf(FLOAT) (
+  SFUNC = locf_state,
+  STYPE = FLOAT
+);
 
 COMMIT;

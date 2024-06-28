@@ -26,6 +26,8 @@ import (
 	"github.com/rs/zerolog"
 )
 
+// Example query for a specific economic indicator on all trading dayings:
+// select trading_days, locf(value) OVER( ORDER BY trading_days ) from trading_days(date'2024-04-01', date'2024-06-30') left join fred_economic_indicator_0b97b f ON (f.series='UNRATE' AND trading_days = f.event_date) order by trading_days desc;
 type Fred struct{}
 
 func (fred *Fred) Name() string {

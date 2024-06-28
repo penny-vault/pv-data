@@ -24,7 +24,8 @@ import (
 type StatusType int
 
 const (
-	RunFailed StatusType = iota
+	StatusUnknown StatusType = iota
+	RunFailed
 	RunSuccess
 )
 
@@ -39,11 +40,13 @@ type RunSummary struct {
 
 type Observation struct {
 	AssetObject       *Asset
-	MarketHoliday     *MarketHoliday
+	CustomObject      *Custom
+	EconomicIndicator *EconomicIndicator
 	EodQuote          *Eod
 	Fundamental       *Fundamental
+	MarketHoliday     *MarketHoliday
 	Metric            *Metric
-	EconomicIndicator *EconomicIndicator
+	Rating            *AnalystRating
 
 	ObservationDate  time.Time
 	SubscriptionID   uuid.UUID
@@ -60,11 +63,13 @@ type DataType struct {
 
 const (
 	AssetKey             = "asset-description"
+	CustomKey            = "custom"
+	EconomicIndicatorKey = "economic-indicator"
 	EODKey               = "eod"
-	MetricKey            = "metric"
 	FundamentalsKey      = "fundamental"
 	MarketHolidaysKey    = "market-holidays"
-	EconomicIndicatorKey = "economic-indicator"
+	MetricKey            = "metric"
+	RatingKey            = "rating"
 )
 
 var DataTypes = map[string]*DataType{
@@ -110,6 +115,34 @@ CREATE INDEX %[1]s_search_idx ON %[1]s USING GIN (search);`,
 		Version:       0,
 		IsPartitioned: false,
 	},
+	CustomKey: {
+		Name: CustomKey,
+		Schema: `CREATE TABLE %[1]s (
+	ticker         CHARACTER VARYING(10) NOT NULL,
+	composite_figi CHARACTER(12)         NOT NULL,
+	event_date     DATE                  NOT NULL,
+	key            TEXT                  NOT NULL,
+	value          JSONB                 NOT NULL,
+	PRIMARY KEY (key, composite_figi, event_date)
+);
+
+CREATE INDEX %[1]s_key_ticker_event_date_idx ON %[1]s(key, ticker, event_date DESC)`,
+		Migrations:    []string{},
+		Version:       0,
+		IsPartitioned: false,
+	},
+	EconomicIndicatorKey: {
+		Name: EconomicIndicatorKey,
+		Schema: `CREATE TABLE %[1]s (
+			series     TEXT NOT NULL,
+			event_date DATE NOT NULL,
+			value      REAL NOT NULL,
+			PRIMARY KEY (series, event_date)
+		);`,
+		Migrations:    []string{},
+		Version:       0,
+		IsPartitioned: false,
+	},
 	EODKey: {
 		Name: EODKey,
 		Schema: `CREATE TABLE %[1]s (
@@ -135,42 +168,6 @@ BEFORE INSERT ON %[1]s
 FOR EACH ROW
 WHEN (NEW.adj_close IS NULL AND NEW.close IS NOT NULL)
 EXECUTE PROCEDURE adj_close_default();`,
-		Migrations:    []string{},
-		Version:       0,
-		IsPartitioned: true,
-	},
-	EconomicIndicatorKey: {
-		Name: EconomicIndicatorKey,
-		Schema: `CREATE TABLE %[1]s (
-			series     CHARACTER VARYING(24) NOT NULL,
-			event_date DATE                  NOT NULL,
-			value      REAL                  NOT NULL,
-			PRIMARY KEY (series, event_date)
-		);`,
-		Migrations:    []string{},
-		Version:       0,
-		IsPartitioned: false,
-	},
-	MetricKey: {
-		Name: MetricKey,
-		Schema: `CREATE TABLE %[1]s (
-ticker         CHARACTER VARYING(10) NOT NULL,
-composite_figi CHARACTER(12)         NOT NULL,
-event_date     DATE                  NOT NULL,
-market_cap     BIGINT                NOT NULL DEFAULT 0.0,
-ev             BIGINT                NOT NULL DEFAULT 0.0,
-pe             REAL                  NOT NULL DEFAULT 0.0,
-pb             REAL                  NOT NULL DEFAULT 0.0,
-ps             REAL                  NOT NULL DEFAULT 0.0,
-ev_ebit        REAL                  NOT NULL DEFAULT 0.0,
-ev_ebitda      REAL                  NOT NULL DEFAULT 0.0,
-sp500          BOOLEAN               DEFAULT false,
-CHECK (LENGTH(TRIM(BOTH composite_figi)) = 12),
-PRIMARY KEY (composite_figi, event_date)
-) PARTITION BY RANGE (event_date);
-
-CREATE INDEX %[1]s_event_date_idx ON %[1]s(event_date);
-CREATE INDEX %[1]s_ticker_idx ON %[1]s(ticker);`,
 		Migrations:    []string{},
 		Version:       0,
 		IsPartitioned: true,
@@ -303,6 +300,46 @@ early_close BOOLEAN NOT NULL DEFAULT false,
 close_time TIME NOT NULL DEFAULT '16:00:00',
 PRIMARY KEY (event_date, market)
 );`,
+		Migrations:    []string{},
+		Version:       0,
+		IsPartitioned: false,
+	},
+	MetricKey: {
+		Name: MetricKey,
+		Schema: `CREATE TABLE %[1]s (
+ticker         CHARACTER VARYING(10) NOT NULL,
+composite_figi CHARACTER(12)         NOT NULL,
+event_date     DATE                  NOT NULL,
+market_cap     BIGINT                NOT NULL DEFAULT 0.0,
+ev             BIGINT                NOT NULL DEFAULT 0.0,
+pe             REAL                  NOT NULL DEFAULT 0.0,
+pb             REAL                  NOT NULL DEFAULT 0.0,
+ps             REAL                  NOT NULL DEFAULT 0.0,
+ev_ebit        REAL                  NOT NULL DEFAULT 0.0,
+ev_ebitda      REAL                  NOT NULL DEFAULT 0.0,
+sp500          BOOLEAN               DEFAULT false,
+CHECK (LENGTH(TRIM(BOTH composite_figi)) = 12),
+PRIMARY KEY (composite_figi, event_date)
+) PARTITION BY RANGE (event_date);
+
+CREATE INDEX %[1]s_event_date_idx ON %[1]s(event_date);
+CREATE INDEX %[1]s_ticker_idx ON %[1]s(ticker);`,
+		Migrations:    []string{},
+		Version:       0,
+		IsPartitioned: true,
+	},
+	RatingKey: {
+		Name: RatingKey,
+		Schema: `CREATE TABLE %[1]s (
+	ticker         CHARACTER VARYING(10) NOT NULL,
+	composite_figi CHARACTER(12)         NOT NULL,
+	event_date     DATE                  NOT NULL,
+	analyst        TEXT                  NOT NULL,
+	rating         INT                   NOT NULL,
+	PRIMARY KEY (analyst, composite_figi, event_date)
+);
+
+CREATE INDEX %[1]s_ticker_event_date_idx ON %[1]s(ticker, event_date DESC)`,
 		Migrations:    []string{},
 		Version:       0,
 		IsPartitioned: false,

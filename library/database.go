@@ -196,9 +196,15 @@ func (myLibrary *Library) SaveObservations(queue <-chan *data.Observation, wg *s
 			}
 		}
 
-		if elem.MarketHoliday != nil {
-			if err := elem.MarketHoliday.SaveDB(ctx, subscription.DataTablesMap[data.MarketHolidaysKey], conn); err != nil {
-				log.Error().Err(err).Msg("cannot save market holiday to database")
+		if elem.CustomObject != nil {
+			if err := elem.CustomObject.SaveDB(ctx, subscription.DataTablesMap[data.CustomKey], conn); err != nil {
+				log.Error().Err(err).Msg("cannot save custom data to database")
+			}
+		}
+
+		if elem.EconomicIndicator != nil {
+			if err := elem.EconomicIndicator.SaveDB(ctx, subscription.DataTablesMap[data.EconomicIndicatorKey], conn); err != nil {
+				log.Error().Err(err).Msg("cannot save economic indicator to database")
 			}
 		}
 
@@ -214,15 +220,21 @@ func (myLibrary *Library) SaveObservations(queue <-chan *data.Observation, wg *s
 			}
 		}
 
+		if elem.MarketHoliday != nil {
+			if err := elem.MarketHoliday.SaveDB(ctx, subscription.DataTablesMap[data.MarketHolidaysKey], conn); err != nil {
+				log.Error().Err(err).Msg("cannot save market holiday to database")
+			}
+		}
+
 		if elem.Metric != nil {
 			if err := elem.Metric.SaveDB(ctx, subscription.DataTablesMap[data.MetricKey], conn); err != nil {
 				log.Error().Err(err).Msg("cannot save metric to database")
 			}
 		}
 
-		if elem.EconomicIndicator != nil {
-			if err := elem.EconomicIndicator.SaveDB(ctx, subscription.DataTablesMap[data.EconomicIndicatorKey], conn); err != nil {
-				log.Error().Err(err).Msg("cannot save economic indicator to database")
+		if elem.Rating != nil {
+			if err := elem.Rating.SaveDB(ctx, subscription.DataTablesMap[data.RatingKey], conn); err != nil {
+				log.Error().Err(err).Msg("cannot save rating to database")
 			}
 		}
 	}

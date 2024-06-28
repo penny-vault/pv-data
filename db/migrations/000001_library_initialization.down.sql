@@ -9,4 +9,6 @@ DROP TYPE assettype CASCADE;
 
 DROP FUNCTION adj_close_default();
 
+DROP FUNCTION locf_state CASCADE;
+
 COMMIT;

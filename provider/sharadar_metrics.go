@@ -59,6 +59,7 @@ func downloadAllSharadarMetrics(ctx context.Context, subscription *library.Subsc
 	defer func() {
 		runSummary.EndTime = time.Now()
 		runSummary.NumObservations = numObs
+		runSummary.Status = data.RunSuccess
 		exitNotification <- runSummary
 	}()
 

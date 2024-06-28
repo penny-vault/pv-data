@@ -19,4 +19,5 @@ var Map = map[string]Provider{
 	"polygon":  &Polygon{},
 	"sharadar": &Sharadar{},
 	"tiingo":   &Tiingo{},
+	"zacks":    &Zacks{},
 }

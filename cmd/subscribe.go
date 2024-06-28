@@ -100,24 +100,46 @@ Also see: subscriptions, unsubscribe`,
 		}
 
 		// walk user through settings required for subscription
-		form := huh.NewForm(
-			huh.NewGroup(
-				huh.NewInput().
-					Title("What should the subscription be named?").
-					Value(&subName),
-				huh.NewSelect[string]().
-					Title("Which dataset do you want to subscribe to?").
-					Options(datasetOptions...).
-					Value(&subDataset),
-				huh.NewInput().
-					Title("What schedule should the subscription run on?").
-					Value(&subSchedule),
-				huh.NewConfirm().
-					Title("Should a healthcheck.io monitor be created for the subscription?").
-					Value(&monitored),
-			),
-			huh.NewGroup(configFields...),
-		)
+		var form *huh.Form
+
+		if len(configFields) > 0 {
+			form = huh.NewForm(
+				huh.NewGroup(
+					huh.NewInput().
+						Title("What should the subscription be named?").
+						Value(&subName),
+					huh.NewSelect[string]().
+						Title("Which dataset do you want to subscribe to?").
+						Options(datasetOptions...).
+						Value(&subDataset),
+					huh.NewInput().
+						Title("What schedule should the subscription run on?").
+						Value(&subSchedule),
+					huh.NewConfirm().
+						Title("Should a healthcheck.io monitor be created for the subscription?").
+						Value(&monitored),
+				),
+				huh.NewGroup(configFields...),
+			)
+		} else {
+			form = huh.NewForm(
+				huh.NewGroup(
+					huh.NewInput().
+						Title("What should the subscription be named?").
+						Value(&subName),
+					huh.NewSelect[string]().
+						Title("Which dataset do you want to subscribe to?").
+						Options(datasetOptions...).
+						Value(&subDataset),
+					huh.NewInput().
+						Title("What schedule should the subscription run on?").
+						Value(&subSchedule),
+					huh.NewConfirm().
+						Title("Should a healthcheck.io monitor be created for the subscription?").
+						Value(&monitored),
+				),
+			)
+		}
 
 		err = form.Run()
 		if err != nil {
